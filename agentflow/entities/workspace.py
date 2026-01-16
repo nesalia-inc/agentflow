@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import TYPE_CHECKING, List
 
-from sqlalchemy import String, DateTime, Text, ForeignKey
+from sqlalchemy import String, DateTime, Text, ForeignKey, select
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from agentflow.db.base import Base
@@ -88,8 +88,7 @@ class Workspace(Base):
         Returns:
             Workspace instance or None if not found
         """
-        from agentflow.entities.workspace import Workspace
-        stmt = Workspace.query().filter(Workspace.name == name)  # type: ignore[attr-defined]
+        stmt = select(cls).where(cls.name == name)
         result = await db.execute(stmt)
         return result.scalar_one_or_none()
 
@@ -103,8 +102,9 @@ class Workspace(Base):
         Returns:
             List of workspaces ordered by creation date (newest first)
         """
-        workspaces = await db.list(cls)
-        return sorted(workspaces, key=lambda w: w.created_at, reverse=True)
+        stmt = select(cls).order_by(cls.created_at.desc())
+        result = await db.execute(stmt)
+        return list(result.scalars().all())
 
     async def add_session(self, db: DatabaseSession, task: str) -> "Session":
         """Create a new session in this workspace.
@@ -132,7 +132,7 @@ class Workspace(Base):
         """
         from agentflow.entities.commit import Commit
 
-        stmt = Commit.query().filter(  # type: ignore[attr-defined]
+        stmt = select(Commit).where(
             Commit.workspace_id == self.id
         ).order_by(Commit.created_at.desc())
 
