@@ -28,6 +28,7 @@ app.add_typer(config_app, name="config")
 @app.command()
 def init(
     db_url: str = typer.Option(None, "--db-url", help="Direct database URL (skips prompts)"),
+    create_workspace: bool = typer.Option(False, "--workspace", "-w", help="Create a workspace after init"),
 ) -> None:
     """Initialize AgentFlow configuration.
 
@@ -35,26 +36,27 @@ def init(
     """
     if db_url:
         # Direct mode - use provided URL
-        _init_direct(db_url)
+        _init_direct(db_url, create_workspace)
     else:
         # Interactive mode
         _init_interactive()
 
 
-def _init_direct(db_url: str) -> None:
+def _init_direct(db_url: str, create_ws: bool = False) -> None:
     """Initialize with direct database URL.
 
     Args:
         db_url: Database connection URL
+        create_ws: Whether to create a workspace
     """
-    typer.echo(f"🔧 Configuring AgentFlow with provided database URL...")
+    typer.echo(f"[*] Configuring AgentFlow with provided database URL...")
 
     # Create database settings
     db_settings = DatabaseSettings(db_url=db_url)
 
     # Test connection
     if not _test_connection_sync(db_settings):
-        typer.echo("❌ Failed to connect to database. Please check your URL and try again.")
+        typer.echo("[!] Failed to connect to database. Please check your URL and try again.")
         raise typer.Exit(1)
 
     # Save configuration
@@ -64,21 +66,14 @@ def _init_direct(db_url: str) -> None:
     user_id = generate_id()
     save_user(user_id, "CLI User")
 
-    typer.echo(f"✅ Configuration saved to ~/.agentflow/config.json")
+    typer.echo("[*] Configuration saved to ~/.agentflow/config.json")
 
-    # Ask if user wants to create a workspace
-    create_ws = typer.confirm("Would you like to create a workspace?", default=True)
-    if not create_ws:
-        typer.echo("✅ Setup complete! Use 'agentflow --help' to see available commands.")
-        return
-
-    # Get workspace name
-    workspace_name = typer.prompt("Workspace name", default="my-project")
-
-    # Create workspace
-    _create_workspace_sync(workspace_name)
-
-    typer.echo("✅ Setup complete! Use 'agentflow --help' to see available commands.")
+    # Create workspace if requested
+    if create_ws:
+        workspace_name = typer.prompt("Workspace name", default="my-project")
+        _create_workspace_sync(workspace_name)
+    else:
+        typer.echo("[*] Setup complete! Use 'agentflow --help' to see available commands.")
 
 
 def _init_interactive() -> None:
@@ -108,17 +103,17 @@ def _init_interactive() -> None:
         db_url = f"sqlite+aiosqlite:///{db_path}"
 
     typer.echo("")
-    typer.echo("⏳ Testing connection...")
+    typer.echo("[*] Testing connection...")
 
     # Create database settings
     db_settings = DatabaseSettings(db_url=db_url)
 
     # Test connection
     if not _test_connection_sync(db_settings):
-        typer.echo("❌ Failed to connect to database. Please check your credentials and try again.")
+        typer.echo("[!] Failed to connect to database. Please check your credentials and try again.")
         raise typer.Exit(1)
 
-    typer.echo("✅ Connection successful!\n")
+    typer.echo("[*] Connection successful!\n")
 
     # Save configuration
     save_database_config(db_settings)
@@ -128,7 +123,7 @@ def _init_interactive() -> None:
     user_name = questionary.text("Your name", default="Developer").ask()
     save_user(user_id, user_name)
 
-    typer.echo("✅ Configuration saved to ~/.agentflow/config.json\n")
+    typer.echo("[*] Configuration saved to ~/.agentflow/config.json\n")
 
     # Ask about workspace
     create_workspace = questionary.confirm("Create a workspace?", default=False).ask()
@@ -137,7 +132,7 @@ def _init_interactive() -> None:
         workspace_name = questionary.text("Workspace name", default="my-project").ask()
         _create_workspace_sync(workspace_name)
 
-    typer.echo("\n✅ You're ready! Use 'agentflow --help' to see available commands.")
+    typer.echo("\n[*] You're ready! Use 'agentflow --help' to see available commands.")
 
 
 def _test_connection_sync(db_settings: DatabaseSettings) -> bool:
@@ -154,7 +149,7 @@ def _test_connection_sync(db_settings: DatabaseSettings) -> bool:
         asyncio.run(_test_connection_async(db_settings))
         return True
     except Exception as e:
-        typer.echo(f"❌ Connection error: {e}")
+        typer.echo(f"[!] Connection error: {e}")
         return False
 
 
@@ -177,7 +172,7 @@ def _create_workspace_sync(workspace_name: str) -> None:
     try:
         asyncio.run(_create_workspace_async(workspace_name))
     except Exception as e:
-        typer.echo(f"❌ Failed to create workspace: {e}")
+        typer.echo(f"[!] Failed to create workspace: {e}")
         raise typer.Exit(1)
 
 
@@ -195,22 +190,22 @@ async def _create_workspace_async(workspace_name: str) -> None:
         set_current_workspace(workspace.id)
 
     await close_db()
-    typer.echo(f"✅ Workspace '{workspace_name}' created")
+    typer.echo(f"[*] Workspace '{workspace_name}' created")
 
 
 @config_app.command("show")
 def config_show() -> None:
     """Show current configuration."""
     if not config_exists():
-        typer.echo("❌ No configuration found. Run 'agentflow init' first.")
+        typer.echo("[!] No configuration found. Run 'agentflow init' first.")
         raise typer.Exit(1)
 
     config = get_database_config()
     if not config:
-        typer.echo("❌ No database configuration found.")
+        typer.echo("[!] No database configuration found.")
         raise typer.Exit(1)
 
-    typer.echo("📋 Current configuration:")
+    typer.echo("[*] Current configuration:")
     typer.echo(f"  Database URL: {config.db_url}")
     typer.echo(f"  Schema: {config.db_schema}")
     typer.echo(f"  Pool size: {config.db_pool_size}")
@@ -222,12 +217,12 @@ def config_test() -> None:
     """Test database connection."""
     db_config = get_database_config()
     if not db_config:
-        typer.echo("❌ No database configuration found. Run 'agentflow init' first.")
+        typer.echo("[!] No database configuration found. Run 'agentflow init' first.")
         raise typer.Exit(1)
 
-    typer.echo("⏳ Testing connection...")
+    typer.echo("[*] Testing connection...")
     if _test_connection_sync(db_config):
-        typer.echo("✅ Connection successful!")
+        typer.echo("[*] Connection successful!")
     else:
         raise typer.Exit(1)
 
