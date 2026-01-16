@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import TYPE_CHECKING, List
 
-from sqlalchemy import String, DateTime, ForeignKey, Enum as SQLEnum
+from sqlalchemy import String, DateTime, ForeignKey, select
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from agentflow.db.base import Base
@@ -56,7 +56,6 @@ class Session(Base):
         uselist=False,
     )
     actions: Mapped[List["Action"]] = relationship(  # type: ignore[name-defined]
-        back_populates="session",
         cascade="all, delete-orphan",
     )
 
@@ -89,7 +88,7 @@ class Session(Base):
         Returns:
             Active session or None if no active session exists
         """
-        stmt = cls.query().filter(  # type: ignore[attr-defined]
+        stmt = select(cls).where(
             cls.workspace_id == workspace_id,
             cls.status == SessionStatus.ACTIVE,
         )
@@ -148,7 +147,7 @@ class Session(Base):
         """
         from agentflow.entities.action import Action
 
-        stmt = Action.query().filter(  # type: ignore[attr-defined]
+        stmt = select(Action).where(
             Action.session_id == self.id
         ).order_by(Action.timestamp)
         result = await db.execute(stmt)
