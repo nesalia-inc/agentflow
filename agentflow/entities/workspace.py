@@ -61,6 +61,7 @@ class Workspace(Base):
             id=generate_id(),
             name=name,
             description=description,
+            created_at=datetime.utcnow(),
         )
         return await db.add(workspace)
 

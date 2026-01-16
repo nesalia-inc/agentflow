@@ -49,6 +49,7 @@ class Action(Base):
             session_id=session_id,
             description=description,
             action_type=action_type,
+            timestamp=datetime.utcnow(),
             meta_data=json.dumps(metadata) if metadata else None,
         )
         return action

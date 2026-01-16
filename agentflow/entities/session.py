@@ -72,6 +72,7 @@ class Session(Base):
             workspace_id=workspace_id,
             task=task,
             status=SessionStatus.ACTIVE,
+            started_at=datetime.utcnow(),
         )
 
     @classmethod
@@ -188,6 +189,7 @@ class Session(Base):
             description=description,
             parent_id=parent.id if parent else None,
             duration_seconds=duration,
+            created_at=datetime.utcnow(),
         )
         return await db.add(commit)
 
