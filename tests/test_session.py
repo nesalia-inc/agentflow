@@ -10,7 +10,12 @@ from agentflow.entities.workspace import Workspace
 @pytest.mark.asyncio
 async def test_create_session(db_session):
     """Test creating a session."""
-    session = Session.create(
+    from agentflow.db.session import DatabaseSession
+
+    db = DatabaseSession(db_session)
+
+    session = await Session.create(
+        db,
         workspace_id="test-workspace-1",
         task="Implement authentication",
     )
@@ -31,8 +36,7 @@ async def test_session_get_active(db_session):
     db = DatabaseSession(db_session)
 
     # Create active session
-    session1 = Session.create(workspace_id="ws-1", task="Task 1")
-    await db.add(session1)
+    session1 = await Session.create(db, workspace_id="ws-1", task="Task 1")
 
     # Get active session
     retrieved = await Session.get_active(db, "ws-1")
@@ -60,8 +64,7 @@ async def test_session_log_action(db_session):
     db = DatabaseSession(db_session)
 
     # Create session
-    session = Session.create(workspace_id="ws-1", task="Test task")
-    await db.add(session)
+    session = await Session.create(db, workspace_id="ws-1", task="Test task")
 
     # Log action
     action = await session.log_action(
@@ -85,9 +88,9 @@ async def test_session_complete(db_session):
     db = DatabaseSession(db_session)
 
     # Create session
-    session = Session.create(workspace_id="ws-1", task="Test task")
+    session = await Session.create(db, workspace_id="ws-1", task="Test task")
     session.started_at = datetime.utcnow() - timedelta(seconds=100)
-    await db.add(session)
+    await db.commit()
 
     # Complete session
     commit = await session.complete(
@@ -116,8 +119,7 @@ async def test_session_abort(db_session):
     db = DatabaseSession(db_session)
 
     # Create session
-    session = Session.create(workspace_id="ws-1", task="Test task")
-    await db.add(session)
+    session = await Session.create(db, workspace_id="ws-1", task="Test task")
 
     # Abort session
     await session.abort(db)
@@ -147,7 +149,11 @@ async def test_session_duration(db_session):
 @pytest.mark.asyncio
 async def test_session_duration_not_completed(db_session):
     """Test duration is None for active session."""
-    session = Session.create(workspace_id="ws-1", task="Test task")
+    from agentflow.db.session import DatabaseSession
+
+    db = DatabaseSession(db_session)
+
+    session = await Session.create(db, workspace_id="ws-1", task="Test task")
 
     assert session.duration_seconds is None
 
@@ -155,7 +161,11 @@ async def test_session_duration_not_completed(db_session):
 @pytest.mark.asyncio
 async def test_session_is_active(db_session):
     """Test is_active property."""
-    active_session = Session.create(workspace_id="ws-1", task="Task")
+    from agentflow.db.session import DatabaseSession
+
+    db = DatabaseSession(db_session)
+
+    active_session = await Session.create(db, workspace_id="ws-1", task="Task")
     assert active_session.is_active is True
 
     completed_session = Session(
@@ -175,8 +185,7 @@ async def test_session_get_actions(db_session):
     db = DatabaseSession(db_session)
 
     # Create session
-    session = Session.create(workspace_id="ws-1", task="Test task")
-    await db.add(session)
+    session = await Session.create(db, workspace_id="ws-1", task="Test task")
 
     # Log multiple actions
     await session.log_action(db, "Action 1", "type1")

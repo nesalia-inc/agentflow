@@ -17,10 +17,10 @@ async def test_commit_fields(db_session):
 
     # Create workspace and session
     workspace = await Workspace.create(db, name="test-ws")
-    session = Session.create(workspace.id, "Test task")
+    session = await Session.create(db, workspace.id, "Test task")
     session.started_at = datetime.utcnow() - timedelta(seconds=100)
     session.completed_at = datetime.utcnow() - timedelta(seconds=50)
-    await db.add(session)
+    await db.commit()
 
     # Create commit
     commit = Commit(
@@ -52,8 +52,7 @@ async def test_get_by_id(db_session):
 
     # Create workspace, session and commit
     workspace = await Workspace.create(db, name="test-ws")
-    session = Session.create(workspace.id, "Test task")
-    await db.add(session)
+    session = await Session.create(db, workspace.id, "Test task")
 
     commit = Commit(
         id="test-commit",
@@ -93,8 +92,7 @@ async def test_list_for_workspace(db_session):
 
     # Create multiple sessions and commits
     for i in range(3):
-        session = Session.create(workspace.id, f"Task {i}")
-        await db.add(session)
+        session = await Session.create(db, workspace.id, f"Task {i}")
 
         commit = Commit(
             id=f"commit-{i}",
@@ -127,8 +125,7 @@ async def test_list_for_workspace_with_limit(db_session):
 
     # Create multiple commits
     for i in range(5):
-        session = Session.create(workspace.id, f"Task {i}")
-        await db.add(session)
+        session = await Session.create(db, workspace.id, f"Task {i}")
 
         commit = Commit(
             id=f"commit-{i}",
@@ -152,8 +149,7 @@ async def test_get_session(db_session):
 
     # Create workspace and session
     workspace = await Workspace.create(db, name="test-ws")
-    session = Session.create(workspace.id, "Test task")
-    await db.add(session)
+    session = await Session.create(db, workspace.id, "Test task")
 
     # Create commit
     commit = Commit(
@@ -179,8 +175,7 @@ async def test_get_actions(db_session):
 
     # Create workspace and session
     workspace = await Workspace.create(db, name="test-ws")
-    session = Session.create(workspace.id, "Test task")
-    await db.add(session)
+    session = await Session.create(db, workspace.id, "Test task")
 
     # Add actions to session
     await session.log_action(db, "Action 1", "type1")
@@ -275,8 +270,7 @@ async def test_get_last_for_workspace(db_session):
 
     # Create multiple commits
     for i in range(3):
-        session = Session.create(workspace.id, f"Task {i}")
-        await db.add(session)
+        session = await Session.create(db, workspace.id, f"Task {i}")
 
         commit = Commit(
             id=f"commit-{i}",
