@@ -57,3 +57,13 @@ def get_database_settings() -> DatabaseSettings:
     if _db_settings is None:
         _db_settings = DatabaseSettings()
     return _db_settings
+
+
+def set_database_settings(settings: DatabaseSettings) -> None:
+    """Set the database settings instance.
+
+    Args:
+        settings: Database settings to set as singleton
+    """
+    global _db_settings
+    _db_settings = settings
