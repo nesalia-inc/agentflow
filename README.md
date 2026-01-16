@@ -9,10 +9,12 @@ AgentFlow is a workflow management system designed to help AI agents track and m
 ## Features
 
 - **Workspace Management** - Organize work into isolated workspaces for different projects
-- **Session Tracking** - Track work sessions with start/end times and status
-- **Action Logging** - Log detailed actions during active sessions
+- **Session Tracking** - Track work sessions with start/end times, duration, and status
+- **Action Logging** - Log detailed actions during active sessions with optional types
 - **Commit System** - Create commits to summarize completed work with parent-child relationships
+- **Commit History** - View commit history with detailed information and logged actions
 - **Multiple Databases** - Support for PostgreSQL and SQLite
+- **ASCII Output** - Windows-compatible output (no special characters)
 
 ## Installation
 
@@ -71,6 +73,19 @@ agentflow session log "Added login endpoint"
 agentflow session status
 ```
 
+### 6. Complete Session
+
+```bash
+agentflow session commit "feat: implement authentication" --description "Added login and registration with JWT tokens"
+```
+
+### 7. View History
+
+```bash
+agentflow log
+agentflow show <commit-id>
+```
+
 ## Commands
 
 ### Configuration
@@ -88,7 +103,12 @@ agentflow session status
 - `agentflow session start <task>` - Start a new session
 - `agentflow session status` - Show current session status
 - `agentflow session abort` - Abort the current session
-- `agentflow session log <action>` - Log an action to the current session
+- `agentflow session log <action> [-t <type>]` - Log an action to the current session
+- `agentflow session commit <message> [-d <description>]` - Complete session and create commit
+
+### History
+- `agentflow log [-n N]` - Show commit history (default 10 commits)
+- `agentflow show <commit-id>` - Show commit details with actions
 
 ## Requirements
 
@@ -123,4 +143,19 @@ uv run mypy
 
 ## License
 
-MIT
+MIT License - see [LICENSE](LICENSE) for details.
+
+## Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.
+
+## Roadmap
+
+For planned features and future development, see the [ROADMAP](docs/ROADMAP.md).
+
+## Links
+
+- [PyPI](https://pypi.org/project/agentflow-cli/)
+- [GitHub Repository](https://github.com/Developers-Secrets-Inc/agentflow)
+- [Issue Tracker](https://github.com/Developers-Secrets-Inc/agentflow/issues)
+- [Release Notes](CHANGELOG.md)
