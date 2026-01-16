@@ -67,9 +67,13 @@ async def get_db_session() -> AsyncGenerator[AsyncSession, None]:
 
 
 async def init_db() -> None:
-    """Initialize the database engine."""
+    """Initialize the database engine and create tables."""
     # This will create the engine on first call
-    get_engine()
+    engine = get_engine()
+
+    # Create all tables
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
 
 
 async def close_db() -> None:
