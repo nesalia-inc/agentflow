@@ -55,9 +55,6 @@ class Session(Base):
         back_populates="session",
         uselist=False,
     )
-    actions: Mapped[List["Action"]] = relationship(  # type: ignore[name-defined]
-        cascade="all, delete-orphan",
-    )
 
     @classmethod
     def create(cls, workspace_id: str, task: str) -> "Session":
