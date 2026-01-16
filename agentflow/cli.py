@@ -770,5 +770,92 @@ async def _session_log_async(description: str, action_type: str | None) -> None:
     await close_db()
 
 
+@session_app.command("commit")
+def session_commit(
+    message: str = typer.Argument(..., help="Commit message"),
+    description: str = typer.Option(None, "--description", "-d", help="Detailed description"),
+) -> None:
+    """Complete the current session and create a commit."""
+    if not config_exists():
+        typer.echo("[!] No configuration found. Run 'agentflow init' first.")
+        raise typer.Exit(1)
+
+    _session_commit_sync(message, description)
+
+
+def _session_commit_sync(message: str, description: str | None) -> None:
+    """Commit session synchronously.
+
+    Args:
+        message: Commit message
+        description: Optional detailed description
+    """
+    try:
+        asyncio.run(_session_commit_async(message, description))
+    except Exception as e:
+        typer.echo(f"[!] Failed to commit session: {e}")
+        raise typer.Exit(1)
+
+
+async def _session_commit_async(message: str, description: str | None) -> None:
+    """Commit session asynchronously.
+
+    Args:
+        message: Commit message
+        description: Optional detailed description
+    """
+    # Get current session from state
+    session_id = get_current_session_id()
+    if not session_id:
+        typer.echo("[!] No active session. Use 'agentflow session start <task>' to begin.")
+        raise typer.Exit(1)
+
+    db_config = get_database_config()
+    if not db_config:
+        typer.echo("[!] No database configuration found. Run 'agentflow init' first.")
+        raise typer.Exit(1)
+
+    # Set database settings from config
+    set_database_settings(db_config)
+
+    await init_db()
+
+    async with get_db() as db:
+        db_session = DatabaseSession(db.session)
+
+        # Get session by ID
+        session = await Session.get_by_id(db_session, session_id)
+        if not session:
+            typer.echo("[!] Session not found in database. State may be corrupted.")
+            typer.echo("[!] Use 'agentflow session start <task>' to create a new session.")
+            raise typer.Exit(1)
+
+        # Check if session is active
+        if not session.is_active:
+            typer.echo(f"[!] Session is not active (status: {session.status}).")
+            typer.echo("[!] Use 'agentflow session start <task>' to create a new session.")
+            raise typer.Exit(1)
+
+        # Complete session and create commit
+        commit = await session.complete(
+            db_session,
+            message=message,
+            description=description,
+        )
+
+        # Clear current session from state
+        clear_current_session()
+
+        # Show confirmation
+        duration_str = format_duration(commit.duration_seconds) if commit.duration_seconds else "0s"
+        typer.echo(f"[*] Session committed: {commit.id}")
+        typer.echo(f"[*] Message: {message}")
+        if description:
+            typer.echo(f"[*] Description: {description}")
+        typer.echo(f"[*] Duration: {duration_str}")
+
+    await close_db()
+
+
 if __name__ == "__main__":
     app()
