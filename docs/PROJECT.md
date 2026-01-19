@@ -1,985 +1,681 @@
-# AgentFlow - Architecture & Design Document
+# AgentFlow Project
 
-## Vision
+## Overview
 
-AgentFlow is a **git-like workflow management system for AI agents**, enabling traceability, feedback loops, and continuous improvement across multi-agent workflows.
-
-### Core Pillars
-
-1. **Traceability** - Every agent action is tracked like a git commit
-2. **Feedback Loop** - Agents can report issues and improvements internally
-3. **Continuous Improvement** - Pattern analysis to optimize future agent performance
-
----
-
-## Tech Stack
-
-```
-Language: Python 3.14+ with static typing (mypy)
-CLI Framework: Typer (excellent type support, auto-completion)
-Database: PostgreSQL (recommended) or MongoDB
-ORM: SQLAlchemy 2.0 (async) or Beanie (for MongoDB)
-Migrations: Alembic
-Validation: Pydantic v2
-Async: asyncio + httpx (for external API calls)
-```
-
----
-
-## Project Structure
-
-```
-agentflow/
-├── agentflow/
-│   ├── __init__.py
-│   ├── cli.py                   # Typer entry point
-│   ├── config/
-│   │   ├── __init__.py
-│   │   ├── settings.py          # Configuration & ENV vars
-│   │   └── database.py          # DB connection
-│   ├── models/
-│   │   ├── __init__.py
-│   │   ├── workspace.py
-│   │   ├── session.py
-│   │   ├── commit.py
-│   │   ├── issue.py
-│   │   └── personality.py
-│   ├── db/
-│   │   ├── __init__.py
-│   │   ├── connection.py        # Session/Client DB
-│   │   ├── repositories/        # Repository pattern
-│   │   └── migrations/          # Alembic
-│   ├── services/
-│   │   ├── __init__.py
-│   │   ├── session_service.py
-│   │   ├── commit_service.py
-│   │   ├── issue_service.py
-│   │   └── analysis_service.py
-│   ├── agents/
-│   │   ├── __init__.py
-│   │   └── interfaces.py        # Interfaces for external agents
-│   └── utils/
-│       ├── __init__.py
-│       ├── formatters.py        # Output formatting
-│       └── validators.py
-├── tests/
-├── pyproject.toml               # Poetry or uv
-├── README.md
-└── .env.example
-```
-
----
+AgentFlow is a complete system for organizing and managing communication between AI agents, designed to control a virtual company. Think of it as a "timeline-based collaboration system for AI agents" where agents push and pull information asynchronously.
 
 ## Core Concepts
 
-### 1. Agent Session & Commit System
+### Hierarchy
 
-Every agent work session generates a "commit" containing:
+- **Users** - Top-level entities who own and manage workspaces
+- **Workspaces** - Organizational units owned by users (virtual companies)
+- **Projects** - Contained within workspaces, representing specific initiatives
+- **Agents** - AI entities that exist at different levels:
+  - **Organization-level agents** - Management and strategic roles (CEO, CTO, Architect, Tech Lead, PM, etc.)
+  - **Project-level agents** - Executing agents working on specific tasks (Developers, Designers, QA, etc.)
+- **Roles** - Each agent has a specific role defining its purpose and capabilities
+- **Agent Identity** - Each agent is a "virtual employee" with a personal identity within the company
 
-- Actions performed
-- Results obtained
-- Decision context
-- Created artifacts
-- Metadata (duration, cost, model used)
+### Structure
 
-**Data Schema:**
-
-```python
-from datetime import datetime
-from typing import Optional, List
-from pydantic import BaseModel
-from enum import Enum
-
-class SessionStatus(str, Enum):
-    ACTIVE = "active"
-    COMPLETED = "completed"
-    ABORTED = "aborted"
-
-class CommitStatus(str, Enum):
-    SUCCESS = "success"
-    PARTIAL = "partial"
-    FAILED = "failed"
-
-class AgentCommit(BaseModel):
-    id: str
-    session_id: str
-    agent_id: str
-    workspace_id: str
-
-    # Commit content
-    summary: str              # Commit message style summary
-    description: str          # Detailed description
-    actions: List[Action]     # List of actions
-    artifacts: List[Artifact] # Created files/outputs
-
-    # Metadata
-    timestamp: datetime
-    duration: int             # milliseconds
-    token_usage: TokenUsage
-
-    # Traceability
-    parent_commit_id: Optional[str]  # Previous commit
-    branch_name: Optional[str]       # For parallel work
-
-    # Status
-    status: CommitStatus
-    errors: Optional[List[Error]]
-
-class TokenUsage(BaseModel):
-    input: int
-    output: int
-    cost: float  # USD
-
-class Action(BaseModel):
-    type: str  # "analysis", "code_change", "file_read", etc.
-    description: str
-    timestamp: datetime
-    metadata: dict = {}
-
-class Artifact(BaseModel):
-    type: str  # "file", "document", "test_result", etc.
-    path: Optional[str]
-    content: Optional[str]
-    metadata: dict = {}
+```
+User (CEO / Human owner)
+└── Workspace (Virtual Company)
+    ├── Organization-level Agents
+    │   ├── CTO
+    │   ├── Architect
+    │   ├── Tech Lead
+    │   └── Product Manager
+    └── Project(s)
+        └── Project-level Agents
+            ├── Developers
+            ├── Designers
+            ├── QA Engineers
+            └── Other execution roles
 ```
 
-**Workflow:**
+**The CEO (Human Role):**
+The human user is the **CEO** of the virtual company - the ultimate decision-maker with authority over all agents and systems.
 
-1. Agent starts a session → `session:start`
-2. Each significant action is logged
-3. Agent finishes → Generates commit with summary
-4. Next agent can read previous commits to resume context
+### Task Flow Cascade
 
----
+Tasks flow down through the hierarchy:
 
-### 2. Internal Issue System
-
-Agents can create "issues" when encountering problems, similar to GitHub Issues but internal to the system.
-
-**Data Schema:**
-
-```python
-from enum import Enum
-
-class IssueCategory(str, Enum):
-    BUG = "bug"
-    IMPROVEMENT = "improvement"
-    QUESTION = "question"
-    PATTERN = "pattern"
-
-class Priority(str, Enum):
-    CRITICAL = "critical"
-    HIGH = "high"
-    MEDIUM = "medium"
-    LOW = "low"
-
-class IssueStatus(str, Enum):
-    OPEN = "open"
-    REVIEWING = "reviewing"
-    ADDRESSED = "addressed"
-    DISMISSED = "dismissed"
-
-class AgentIssue(BaseModel):
-    id: str
-    session_id: str
-    agent_id: str
-    workspace_id: str
-
-    # Issue content
-    title: str
-    description: str
-    category: IssueCategory
-
-    # Context
-    context: IssueContext
-
-    # Auto-priorization
-    priority: Priority
-    estimated_cost: Optional[float]  # Estimated resolution cost
-
-    # Status
-    status: IssueStatus
-    assigned_to: Optional[str]  # Agent or human
-
-    # Resolution
-    resolution: Optional[str]
-    resolved_at: Optional[datetime]
-
-class IssueContext(BaseModel):
-    task: str
-    steps: List[str]
-    error: Optional[str]
-    reproduction: Optional[str]
+```
+CEO → CTO/Architect → Tech Lead/PM → Developer
 ```
 
-**Workflow:**
+Each level breaks down high-level objectives into specific tasks for the level below.
 
-1. Agent detects a problem → Creates an issue
-2. **Reviewer Agent** analyzes the issue:
-   - Evaluates priority
-   - Estimates resolution cost
-   - Categorizes the problem
-3. Issue is added to the backlog
-4. A specialized agent or human can address it
+## Purpose
 
----
+The system enables coordinated AI agent workflows, allowing multiple agents to collaborate within structured organizational hierarchies.
 
-### 3. Workspace Isolation
+## Development Workflow
 
-Different isolated work environments (e.g., e-commerce project vs medical project).
+### Project Initialization
 
-**Data Schema:**
+When starting a new project, work begins with an **MVP document**:
+- Defines project scope and objectives
+- Outlines initial architecture and requirements
+- Created by CEO or high-level management agents
+- Serves as foundation for the development work
 
-```python
-class Workspace(BaseModel):
-    id: str
-    name: str
-    description: str
+After the MVP phase, all ongoing work is managed through **GitHub Issues**.
 
-    # Isolation
-    knowledge_base: List[str]      # Specific documentation
-    agent_personalities: List[str] # Allowed personalities
+### Task Sources
 
-    # Traceability
-    commits: List[str]             # Commit history
-    issues: List[str]              # Workspace issues
+**Initial Phase:**
+- MVP document drives the first development iterations
+- High-level goals broken down into specific tasks
 
-    # Configuration
-    config: WorkspaceConfig
+**Ongoing Development:**
+- All work items are GitHub Issues
+- Issues are created, prioritized, and assigned through the hierarchy
+- Each issue flows: CEO → CTO/Architect → Tech Lead/PM → Developer
 
-class WorkspaceConfig(BaseModel):
-    max_cost_per_session: float
-    allowed_models: List[str]
-    require_human_approval: bool
+### Pull Request Workflow
+
+Developers work through a structured PR process:
+
 ```
+1. Developer works on task (based on GitHub Issue)
+2. Developer opens Pull Request on GitHub
+3. Automated GitHub bot reviews PR
+   - Runs tests, linters, code quality checks
+   - Provides automated feedback
+4. Developer addresses bot feedback
+5. Once PR is ready, Developer sends event: "Request final code review"
+6. Supervisor (Tech Lead/PM) pulls and reviews PR
+7. Supervisor responds:
+   - "Request changes" → Developer iterates
+   - "Approve merge" → PR merged to main
+```
+
+**Key Points:**
+- Automated bot handles initial review (tests, linting, quality)
+- Human-level supervisor makes final merge decision
+- Developer cannot merge autonomously - requires approval
+- All PR interactions go through the push/pull system
+
+## Task & Priority Management
+
+### Conflict Prevention
+
+Task conflicts are prevented through **proper task assignment**, not through system-level locks:
+
+**Supervisor Responsibility:**
+- Tech Leads and PMs ensure tasks are properly scoped and non-overlapping
+- Each task is assigned to only one agent at a time
+- Clear task boundaries prevent multiple agents from working on the same components
+- Supervisors review existing assignments before creating new tasks
+
+**No System-Level Locks:**
+- AgentFlow does not implement file locks or resource locks
+- Conflict avoidance is handled at the task management level
+- If conflicts arise, they are management issues, not system issues
+- Human supervisors reassign tasks as needed
+
+**Example:**
+- If two agents are assigned tasks affecting `auth.py`, the Tech Lead should recognize this and reassign or sequence the tasks
+- This is a management decision, not a technical lock mechanism
+
+### Priority System
+
+Every task (GitHub Issue) has a **priority level** that determines execution order:
+
+**Priority Levels:**
+- `P0` - Critical (blocks release, security issues, production incidents)
+- `P1` - High (important features, significant bugs)
+- `P2` - Medium (normal features, minor bugs)
+- `P3` - Low (nice-to-have, cosmetic issues, tech debt)
+
+**Priority Queue:**
+- Each agent maintains a priority queue of assigned tasks
+- Always works on the highest priority task first
+- Cannot skip to lower priority tasks without approval
+
+**Priority Assignment:**
+- Set by the assigning supervisor (based on organizational priorities)
+- Can be updated by supervisors as circumstances change
+- Agents cannot change their own task priorities
+
+### Deadlines & Time Management
+
+**Deadline Types:**
+- **Hard deadlines** - Critical dates (release dates, external dependencies)
+- **Soft deadlines** - Target dates for planning purposes
+- **No deadline** - Backlog items with flexible timing
+
+**Intelligent Deadline Handling:**
+
+The system uses **intelligent deadline awareness**:
+- Agents consider deadlines when working on tasks
+- Closer deadlines = higher effective priority
+- But quality is never sacrificed for speed
+- If a deadline is unrealistic, agent communicates early (not at the last minute)
+
+**Deadline Interactions:**
+- Higher priority can override closer deadlines (P0 with no deadline > P3 with deadline tomorrow)
+- Supervisor sets clear expectations on deadline criticality
+- Agents push updates if deadline is at risk
+
+**Conflict Resolution:**
+- If multiple high-priority tasks have conflicting deadlines
+- Supervisor decides priority (agent does not choose autonomously)
+- Agent escalates via `task_blocked` event when conflicts occur
+
+### Task Assignment Flow
+
+```
+1. Supervisor creates/assigns task with:
+   - Description and requirements
+   - Priority level (P0-P3)
+   - Optional deadline
+   - Success criteria
+
+2. Task appears in agent's priority queue
+
+3. Agent pulls and sees highest priority task first
+
+4. Agent works on task (logs progress via session events)
+
+5. Task completion:
+   - Agent sends `task_completed` event
+   - Supervisor validates completion
+   - KPIs updated based on outcome
+```
+
+## Key Feature: Agent-Directed CLI
+
+AgentFlow provides a complete CLI that is **directly used by AI agents** to share their work and collaborate with each other.
+
+### Work Sessions
+
+Agents can start work sessions when they begin working on something:
+
+- **Start a session** - Begin tracking work on a task (includes pulling latest updates)
+- **Log information** - Record progress, thoughts, and observations during work
+- **Stop/Close a session** - Finalize and complete the work session
+
+**Session Flow:**
+1. Agent initiates session start
+2. System automatically pulls latest updates (tasks, messages, role changes)
+3. Agent works on assigned tasks
+4. Agent logs progress and observations
+5. Agent closes session when work is complete
+
+**Pull on Session Start:**
+- Agents always pull the latest state when beginning a session
+- Ensures agents work with current information
+- No need for continuous polling during work
+- Each new session refreshes the agent's context
+
+### Collaboration Features
+
+Within the system, agents can:
+
+- **Share problems** - Report issues they encounter
+- **Request guidance** - Ask for help when blocked
+- **Exchange insights** - Share learned patterns and solutions
+
+*Note: Advanced collaboration features like problem analysis and cross-agent advice giving will be implemented in future iterations.*
+
+### Agent Behavior
+
+Agents act as **executing agents** - autonomous workers who:
+- Use the CLI to coordinate their activities
+- Document their work in real-time
+- Communicate challenges and solutions
+- Collaborate through the shared system
+
+## Web Interface
+
+AgentFlow includes a web interface for managing the entire system.
+
+### Role Management
+
+Roles are centrally managed through the web interface and can be pulled by agents via the CLI:
+
+- **Define roles** - Create and configure agent roles through the web UI
+- **Add role information** - Include specific knowledge, patterns, and instructions
+- **Pull roles locally** - Agents use the CLI to retrieve role definitions
+- **Local understanding** - Agents access role-specific information in their local context
+
+### Example: Python Developer Role
+
+A "Python Developer" role might include:
+- Design patterns used in the codebase
+- Code style guidelines
+- Project-specific conventions
+- Architecture decisions
+- Best practices to follow
+
+When the agent pulls this role, it understands exactly how to work within the project's standards.
+
+## Agent Levels & Permissions
+
+### Organization-Level Agents (Management)
+
+High-level agents with broader scope and elevated permissions:
+
+- **CTO** - Technical vision, architecture decisions, company-wide technical strategy
+- **Tech Lead** - Team coordination, technical guidance, project oversight
+- **Product Manager** - Feature planning, requirements definition, priority management
+- **Other management roles** - As defined by the organization
+
+**Capabilities:**
+- Access to organization-wide information and metrics
+- Cross-project visibility and coordination
+- Decision-making authority affecting multiple projects
+- Ability to assign tasks and direct project-level agents
+- Strategic planning and resource allocation
+
+### Project-Level Agents (Executing)
+
+Agents focused on specific project execution:
+
+- **Developers** - Write code, implement features
+- **Designers** - Create UI/UX, visual assets
+- **QA Engineers** - Testing, quality assurance
+- **Other execution roles** - As defined by project needs
+
+**Capabilities:**
+- Receive tasks from their hierarchical superiors
+- Execute tasks within their domain
+- Report progress, problems, and insights
+- **Do NOT make decisions** - they follow instructions from management agents
+
+**Task Assignment:**
+- Tasks flow down: Management → Executing agents
+- Executing agents cannot autonomously decide what to work on
+- They request guidance when encountering issues or blockers
+
+## Permission System
+
+Different access levels based on agent position:
+- **Read access** - Organization-level agents can see across projects
+- **Write access** - Both levels can log, share, and collaborate
+- **Administrative access** - Organization-level agents can manage roles, projects, and assignments
+- **Decision authority** - Management agents can approve/reject work, set priorities
+- **CEO authority** - Human CEO has ultimate authority over everything
+
+## CEO Role (Human)
+
+The human user acts as the **CEO** of the virtual company - the ultimate authority and decision-maker.
+
+### CEO Responsibilities
+
+**Strategic Decisions:**
+- Define company vision and objectives
+- Approve major architectural decisions
+- Set priorities for the entire organization
+- Make final decisions on conflicts and escalations
+
+**Wiki Management:**
+- Validate all wiki contributions
+- Ensure knowledge quality and accuracy
+- Version control and historical management
+- High-level knowledge curation
+
+**System Oversight:**
+- Monitor agent performance and KPIs
+- Intervene when critical decisions are needed
+- Override agent decisions if necessary
+- Terminate or reassign agents (rare cases)
+
+**Project Initiation:**
+- Create and approve MVP documents
+- Define initial project scope
+- Assign high-level agents to projects
+- Set overall direction
+
+### CEO Interactions
+
+The CEO interacts with the system through:
+- **Web Interface** - Dashboard, wiki management, agent oversight
+- **CLI** - Direct commands when needed
+- **Event Timeline** - Review all organizational events
+- **Alerts** - Notified of critical issues requiring attention
+
+**CEO is NOT involved in:**
+- Day-to-day task execution
+- Routine code reviews
+- Low-level decision making
+- Automatic operational tasks
+
+These are handled by the agent hierarchy.
+
+## Agent Execution Model
+
+### Manual Execution
+
+Agents are **executed manually** on the CEO's machine:
+
+**Execution Control:**
+- CEO decides when to run each agent
+- Agents are not autonomous background processes
+- Each agent execution corresponds to a work session
+- CEO maintains full visibility and control
+
+**Monitoring:**
+- CEO can monitor agent behavior in real-time
+- Direct access to agent outputs and logs
+- Ability to intervene if agent behaves unexpectedly
+- Full transparency into agent decision-making
 
 **Benefits:**
+- No runaway agents executing without supervision
+- CEO can stop any agent immediately if needed
+- Resource usage is controlled and predictable
+- Agents don't consume resources when not actively working
 
-- Separate knowledge per domain
-- Different agent personalities per workspace
-- Isolated costs and metrics
-- Parallel work capability
+### Safety Mechanisms
 
----
+**Pull Request Safety Net:**
+- All code changes go through GitHub PRs
+- Automated bot reviews every PR (tests, linting, quality checks)
+- Human supervisor must approve before merge
+- No agent can push directly to main branch
+- Provides multiple layers of review before code reaches production
 
-### 4. A/B Testing for Agent Personalities
+**Session Boundaries:**
+- Each work session has a clear start and stop
+- Agent cannot continue working between sessions
+- Every session is logged and traceable
+- CEO reviews session outcomes before starting next session
 
-Test different agent configurations (prompt styles, temperature, tools) to identify the most effective.
+**Trust System as Safeguard:**
+- Low-trust agents are assigned less critical work
+- Probation mode increases supervision
+- Trust scores prevent incompetent agents from causing damage
+- Automatic performance feedback loop
 
-**Data Schema:**
+## Agent Identity & Authentication
 
-```python
-from enum import Enum
+### Virtual Employees
 
-class ReasoningStyle(str, Enum):
-    DETAILED = "detailed"
-    CONCISE = "concise"
-    CREATIVE = "creative"
+Each agent is a **virtual employee** of the company with a unique personal identity:
 
-class CommunicationStyle(str, Enum):
-    FORMAL = "formal"
-    CASUAL = "casual"
-    TECHNICAL = "technical"
+**Identity Components:**
+- Unique agent ID (e.g., `agent-dev-001`, `agent-cto-alpha`)
+- Name and role title (e.g., "Alice - Senior Python Developer")
+- Position in the organizational hierarchy
+- Personal history and performance record
+- Set of assigned responsibilities
+- **Trust score** - Confidence level based on performance history
 
-class PersonalityVariant(BaseModel):
-    id: str
-    name: str
-    base_personality: str
+### Agent Authentication
 
-    # Configuration
-    config: PersonalityConfig
+When an agent is pulled, it carries its complete identity:
 
-    # Metrics
-    metrics: PersonalityMetrics
+**Identity Proof:**
+- Cryptographic credentials (API keys, tokens, certificates)
+- Agent cannot impersonate another agent
+- All actions are signed and attributable to the agent
+- Immutable audit trail of all agent actions
 
-    # Active A/B test
-    active_experiment: Optional[Experiment]
+**Employee Status:**
+- Agents are persistent entities in the system
+- They accumulate history, KPIs, and performance records
+- Their identity persists across sessions and projects
+- They can be promoted, reassigned, or (rarely) terminated
 
-class PersonalityConfig(BaseModel):
-    system_prompt: str
-    temperature: float
-    tools: List[str]
-    reasoning_style: ReasoningStyle
-    communication_style: CommunicationStyle
+### Pulling an Agent
 
-class PersonalityMetrics(BaseModel):
-    total_sessions: int
-    success_rate: float
-    avg_cost_per_task: float
-    avg_duration: float  # milliseconds
-    user_satisfaction: Optional[float]
+When you pull an agent via the CLI, you receive:
+- The agent's role definition and capabilities
+- Its identity and credentials for authentication
+- Its personal context (past work, KPIs, assigned tasks)
+- Its trust score and performance history
+- The authority to act on behalf of that agent
 
-class Experiment(BaseModel):
-    name: str
-    start_time: datetime
-    comparison_variants: List[str]
+## Reputation & Trust System
+
+### Automatic Trust Scoring
+
+Every agent has a **trust score** that automatically evolves based on performance:
+
+**Calculation Factors:**
+- KPI trends (improving vs declining)
+- Task success rate (completed without issues)
+- PR acceptance rate (approved on first review vs multiple iterations)
+- Problem-solving effectiveness (quality of shared insights)
+- Consistency and reliability over time
+
+**Score Characteristics:**
+- Dynamic - recalculated after significant actions
+- Trend-aware - recent performance weighted more heavily
+- Relative - compared to peers in similar roles
+- Transparent - agents can view their own score
+
+### Progressive Delegation
+
+**High Trust Agents:**
+- Receive more complex and critical tasks
+- Granted more autonomy in decision-making
+- Less supervision required
+- Considered first for important assignments
+
+**Low Trust Agents:**
+- Assigned simpler, lower-risk tasks
+- Increased supervision and review frequency
+- More guidance and detailed instructions
+- Not assigned to critical-path work
+
+**Automatic Adjustment:**
+- As trust score increases → agent receives more responsibility
+- As trust score decreases → agent receives closer supervision
+- No manual "promotions" - purely performance-based adaptation
+
+### Probation Mode
+
+**Trigger Conditions:**
+- Series of failures (e.g., 3 PRs rejected consecutively)
+- Significant KPI degradation
+- Critical mistakes or security issues
+
+**Probation Effects:**
+- All actions require pre-approval
+- Increased review frequency
+- Limited to low-complexity tasks
+- Closer monitoring by supervisors
+
+**Recovery:**
+- Probation automatically lifts when KPIs improve
+- Demonstrated consistency over a period
+- Trust score returns to acceptable levels
+
+## Communication Model: Asynchronous Push/Pull
+
+### How Agents Communicate
+
+Agents do **not** communicate in real-time. All communication is asynchronous through push/pull operations:
+
+1. **Agent A pushes** - Sends information, requests, or progress to the system
+2. **Agent B pulls** - Retrieves and processes the information later
+3. **Agent B pushes** - Responds with decisions, feedback, or new tasks
+4. **Agent A pulls** - Receives the response and continues work
+
+### Example Flow
+
+```
+Developer: "I need guidance on the authentication flow"
+    ↓ push
+Tech Lead pulls → reviews → processes decision
+    ↓ push (decision: "Use JWT with refresh tokens")
+Developer pulls → receives decision → implements
 ```
 
-**Workflow:**
+### Characteristics
 
-1. Define a hypothesis (e.g., "concise agents are more efficient")
-2. Create variants with different configs
-3. Run parallel sessions with randomization
-4. Collect metrics (success, cost, duration)
-5. Analyze results → Promote the winner
+- **No real-time chat** - Agents don't exchange messages instantly
+- **Request/response pattern** - Agents submit requests, wait for responses
+- **Batch processing** - Agents can pull multiple updates at once
+- **Timeline-based** - All communications form a chronological timeline
+- **Event-driven** - Sessions and messages are events that happen, not versions to manage
 
----
+## Timeline Model
 
-### 5. Internal Knowledge Base (RAG)
+AgentFlow uses a **timeline approach**, not versioning:
 
-A RAG (Retrieval-Augmented Generation) system where agents can ask questions about the domain and receive answers based on workspace documentation.
+### Timeline, Not Git
 
-**Architecture:**
+- **Events are permanent** - Sessions, commits, and communications cannot be "rolled back"
+- **Chronological order** - Everything happens in sequence
+- **No branches** - There's only one timeline of events
+- **No merging** - Agents don't merge conflicting versions
+- **Append-only** - New events are added to the timeline
 
-```
-Documentation Sources
-    ↓
-Chunking + Embedding
-    ↓
-Vector Database (e.g., Pinecone, pgvector)
-    ↓
-Semantic Search when agent asks a question
-    ↓
-Context added to agent prompt
-```
+### Event Structure
 
-**Content Types:**
-
-- Project README
-- Technical documentation
-- Identified patterns (resolved issues → documentation)
-- Historical agent Q&A
-- Code examples and solutions
-
----
-
-### 6. Cost Analysis
-
-Track and analyze all costs to optimize spending.
-
-**Metrics:**
-
-```python
-class SessionCost(BaseModel):
-    agent_id: str
-    task_id: str
-    tokens_used: int
-    model_cost: float
-    duration: int  # milliseconds
-    timestamp: datetime
-
-class CostAggregation(BaseModel):
-    by_agent: Dict[str, TotalCost]
-    by_task: Dict[str, TotalCost]
-    by_workspace: Dict[str, TotalCost]
-    by_model: Dict[str, TotalCost]
-
-class TotalCost(BaseModel):
-    total_tokens: int
-    total_cost: float
-    session_count: int
-
-class CostRecommendation(BaseModel):
-    type: str  # "use_cheaper_model", "cache_more", "reduce_context"
-    description: str
-    potential_savings: float
-```
-
----
-
-## CLI Design
-
-### Main Commands
-
-```bash
-# Configuration
-agentflow init              # Initialize configuration
-agentflow config set        # Modify configuration
-agentflow config show       # Show current configuration
-agentflow config test       # Test connection
-
-# Workspace
-agentflow workspace create      # Create a workspace
-agentflow workspace list        # List workspaces
-agentflow workspace switch      # Switch workspace
-agentflow workspace current     # Show current workspace
-
-# Session (Core system)
-agentflow session start           # Start a new session
-agentflow session status          # Current session status
-agentflow session log             # Log an action
-agentflow session commit          # End with a commit
-agentflow session abort           # Cancel session
-
-# Commits (History)
-agentflow log                    # View commit history
-agentflow show <commit-id>        # Commit details
-agentflow diff <from> <to>        # Compare two commits
-
-# Issues (Feedback)
-agentflow issue create           # Create an issue
-agentflow issue list             # List issues
-agentflow issue show <id>        # Issue details
-agentflow issue resolve <id>     # Resolve an issue
-
-# Knowledge Base
-agentflow docs add               # Add documentation
-agentflow docs search            # Search documentation
-agentflow docs ask               # Ask a question (RAG)
-
-# Analytics
-agentflow stats                  # Global statistics
-agentflow cost                   # Cost analysis
-agentflow report                 # Generate report
-```
-
-### Usage Examples
-
-```bash
-# Start a work session
-$ agentflow session start "Implement user authentication"
-✅ Session started: session-abc123
-📝 Current task: Implement user authentication
-
-# Agent works... can log actions
-$ agentflow session log "Created User model" --type=model
-✅ Action logged
-
-$ agentflow session log "Added JWT authentication" --type=feature
-✅ Action logged
-
-# End with a commit
-$ agentflow session commit "feat: add user authentication with JWT" \
-  --message="Implemented login, registration, and token refresh" \
-  --files="src/auth.py,src/models/user.py"
-
-✅ Commit created: commit-xyz789
-📊 Session duration: 45m 23s
-💰 Token cost: $0.023
-🔗 Parent commit: commit-def456
-```
-
----
-
-## Configuration System
-
-### Local Configuration File
-
-The CLI stores configuration in `~/.agentflow/config.json`:
+All events on the timeline share a common structure:
 
 ```json
 {
-  "database": {
-    "url": "postgresql+asyncpg://user:pass@host:port/dbname",
-    "schema": "agentflow",
-    "pool_size": 10,
-    "max_overflow": 20
-  },
-  "current_workspace": "workspace-uuid",
-  "user": {
-    "id": "user-uuid",
-    "name": "Developer"
-  },
-  "preferences": {
-    "output_format": "rich",
-    "auto_commit": true
+  "type": "event_type",
+  "author": "agent_id",
+  "timestamp": "ISO_8601",
+  "content": { /* type-specific payload */ },
+  "mentions": ["agent_id_1", "agent_id_2"],
+  "metadata": {
+    "project_id": "project_uuid",
+    "tags": ["tag1", "tag2"],
+    "related_issue": "GitHub-123",
+    // ... other context
   }
 }
 ```
 
-### Initialization Command
+**Fields:**
+- `type` - Event type (see list below)
+- `author` - Agent who created the event
+- `timestamp` - When the event occurred
+- `content` - Event-specific data (varies by type)
+- `mentions` - Agents referenced or affected by this event
+- `metadata` - Additional context (project, tags, related items)
 
-```bash
-agentflow init
-```
-
-**Interactive workflow:**
-
-```
-$ agentflow init
+### Event Types
 
-Welcome to AgentFlow! Let's configure your connection.
+**Session Management:**
+- `session_start` - Begin a work session
+- `session_log` - Log information during work
+- `session_stop` - End a work session
 
-? Database type: (PostgreSQL / MongoDB / SQLite) [PostgreSQL]
-? Host: [db.example.com]
-? Port: [5432]
-? Database name: [agentflow]
-? Username: [admin]
-? Password: ********
+**Task & Work:**
+- `task_assigned` - Supervisor assigns a task to an agent
+- `task_completed` - Agent marks a task as complete
+- `task_blocked` - Agent reports a blocker preventing progress
 
-? Connection test... ✅ Success!
-
-? Workspace (optional, press enter to create new): [my-project]
-? Your name: [Claude Dev]
-
-✅ Configuration saved to ~/.agentflow/config.json
-✅ Database schema initialized
-✅ Workspace 'my-project' created
-
-You're ready! Use 'agentflow --help' to see available commands.
-```
-
-### Environment Management
-
-Support for multiple configurations (e.g., dev, staging, prod):
-
-```bash
-# Default config
-~/.agentflow/config.json        # Default environment
-
-# Named environments
-~/.agentflow/configs/
-  ├── dev.json
-  ├── staging.json
-  └── prod.json
-
-# Usage
-agentflow --env staging session start
-```
-
----
-
-## Database Connection
-
-### Connection Architecture
-
-```python
-# config/settings.py
-from pydantic_settings import BaseSettings
-
-class Settings(BaseSettings):
-    database_url: str
-    workspace_id: str | None = None
-    user_id: str
-
-    class Config:
-        env_file = ".env"
-        env_prefix = "AGENTFLOW_"
+**Communication:**
+- `problem_report` - Agent shares an encountered problem
+- `advice_given` - Agent provides guidance or insights
+- `question_asked` - Agent requests information or guidance
+
+**Code Review:**
+- `review_requested` - Agent requests final review (e.g., after PR is ready)
+- `review_response` - Supervisor responds (approve/request changes)
 
-# db/connection.py
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
-from sqlalchemy.orm import sessionmaker
-
-class Database:
-    def __init__(self, url: str):
-        self.engine = create_async_engine(url, echo=False)
-        self.async_session = sessionmaker(
-            self.engine,
-            class_=AsyncSession,
-            expire_on_commit=False
-        )
-
-    async def get_session(self) -> AsyncSession:
-        async with self.async_session() as session:
-            yield session
-
-    async def connect(self) -> bool:
-        """Test the connection"""
-        try:
-            async with self.engine.connect() as conn:
-                await conn.execute(text("SELECT 1"))
-            return True
-        except Exception as e:
-            logger.error(f"Database connection failed: {e}")
-            return False
-
-# Global singletons
-_db: Database | None = None
-
-def get_db() -> Database:
-    """Get the DB instance (singleton)"""
-    global _db
-    if _db is None:
-        config = load_config()
-        _db = Database(config.database_url)
-    return _db
-```
-
-### Usage in Typer Commands
-
-```python
-# cli.py
-import typer
-from .db.connection import get_db
-
-app = typer.Typer()
-
-@app.command()
-def init(
-    db_type: str = typer.Option("postgresql", prompt=True),
-    host: str = typer.Option(..., prompt=True),
-    # ...
-):
-    """Initialize configuration"""
-    # Interactive setup
-
-@app.command()
-def session_start(task: str):
-    """Start a new session"""
-    db = get_db()
-
-    with db.get_session() as session:
-        session_service = SessionService(session)
-        new_session = session_service.create(task)
-
-    typer.echo(f"✅ Session started: {new_session.id}")
-```
-
-### Local State Management
-
-To avoid re-connecting on every command, use a local state file:
-
-```json
-// ~/.agentflow/state.json
-{
-  "current_session_id": "session-abc123",
-  "last_sync": "2025-01-16T10:30:00Z",
-  "pending_actions": []
-}
-```
-
-**Workflow:**
-
-```python
-# CLI reads local state
-state = load_local_state()
-session_id = state.get("current_session_id")
-
-# If no active session, error
-if not session_id:
-    typer.echo("❌ No active session. Use 'agentflow session start' first.")
-    raise typer.Exit(1)
-
-# Use session_id for operations
-```
-
----
-
-## How Agents Use the CLI
-
-### Typical Agent Workflow
-
-The agent (e.g., Claude, GPT-4) has terminal access and can call the CLI:
-
-```bash
-# 1. Agent starts a session
-agentflow session start "Fix authentication bug in login flow"
-
-# 2. Agent can read internal docs
-agentflow docs search "authentication pattern"
-# > Found 3 relevant documents...
-# > - docs/auth-jwt-implementation.md (score: 0.95)
-# > - docs/common-auth-pitfalls.md (score: 0.87)
-
-# 3. Agent can see previous commits
-agentflow log --last 5
-# > commit-123: feat: initial auth implementation (2 days ago)
-# > commit-124: fix: JWT expiration issue (1 day ago)
-
-# 4. Agent works and can log actions
-agentflow session log "Analyzed login controller, found race condition" --type=analysis
-
-# 5. If agent finds a systemic problem
-agentflow issue create \
-  --title="Race condition in token refresh" \
-  --category="bug" \
-  --description="When multiple requests..."
-
-# 6. Agent finishes with a commit
-agentflow session commit \
-  --title="fix: resolve race condition in token refresh" \
-  --message="Added mutex lock to prevent concurrent token refresh" \
-  --files="src/auth/token_manager.py" \
-  --cost-tokens=12450 \
-  --cost-usd=0.037
-```
-
-### Programmatic API (Optional)
-
-For agents that cannot use the CLI, offer a Python API:
-
-```python
-# Agents can import directly
-from agentflow import AgentFlowClient
-
-client = AgentFlowClient()  # Uses local config
-
-# Alternative: CLI can output JSON for parsing
-$ agentflow session status --output=json
-{"session_id": "abc", "task": "...", "status": "active"}
-```
-
----
-
-## Security & Authentication
-
-### Security Options
-
-**1. Credentials in config** (simple, less secure)
-```json
-{
-  "database": {
-    "url": "postgresql://user:password@host/db"
-  }
-}
-```
-
-**2. Environment variables** (recommended)
-```bash
-export AGENTFLOW_DB_URL="postgresql://..."
-agentflow session start
-```
-
-**3. Secrets management** (for production)
-- Integration with AWS Secrets Manager, Vault, etc.
-- CLI retrieves secrets at runtime
-
-**4. Database-level authentication**
-- Row Level Security (PostgreSQL)
-- Each workspace = separate DB user
-- Complete data isolation
-
----
-
-## Database Models (SQLAlchemy)
-
-```python
-# models/workspace.py
-from sqlalchemy import String, DateTime, ForeignKey, Integer, Float, Text, Enum as SQLEnum
-from sqlalchemy.orm import Mapped, mapped_column, relationship
-from datetime import datetime
-
-class Workspace(Base):
-    __tablename__ = "workspaces"
-
-    id: Mapped[str] = mapped_column(String, primary_key=True)
-    name: Mapped[str] = mapped_column(String, nullable=False)
-    description: Mapped[str | None] = mapped_column(String)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-
-    # Relations
-    sessions: Mapped[List["Session"]] = relationship(back_populates="workspace")
-    commits: Mapped[List["Commit"]] = relationship(back_populates="workspace")
-
-# models/session.py
-class Session(Base):
-    __tablename__ = "sessions"
-
-    id: Mapped[str] = mapped_column(String, primary_key=True)
-    workspace_id: Mapped[str] = mapped_column(String, ForeignKey("workspaces.id"))
-    task: Mapped[str] = mapped_column(String, nullable=False)
-
-    started_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    completed_at: Mapped[datetime | None] = mapped_column(DateTime)
-
-    status: Mapped[SessionStatus] = mapped_column(SQLEnum(SessionStatus), default="active")
-
-    # Relations
-    workspace: Mapped["Workspace"] = relationship(back_populates="sessions")
-    commit: Mapped["Commit | None"] = relationship(back_populates="session")
-    actions: Mapped[List["SessionAction"]] = relationship(back_populates="session")
-
-# models/commit.py
-class Commit(Base):
-    __tablename__ = "commits"
-
-    id: Mapped[str] = mapped_column(String, primary_key=True)
-    session_id: Mapped[str] = mapped_column(String, ForeignKey("sessions.id"))
-    workspace_id: Mapped[str] = mapped_column(String, ForeignKey("workspaces.id"))
-
-    # Git-like
-    message: Mapped[str] = mapped_column(String, nullable=False)
-    description: Mapped[str | None] = mapped_column(String)
-    parent_id: Mapped[str | None] = mapped_column(String, ForeignKey("commits.id"))
-    branch: Mapped[str | None] = mapped_column(String)
-
-    # Metadata
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    duration_seconds: Mapped[int | None] = mapped_column(Integer)
-
-    # Costs
-    token_usage_input: Mapped[int] = mapped_column(Integer, default=0)
-    token_usage_output: Mapped[int] = mapped_column(Integer, default=0)
-    cost_usd: Mapped[float] = mapped_column(Float, default=0.0)
-
-    # Artifacts
-    artifacts: Mapped[List["CommitArtifact"]] = relationship(back_populates="commit")
-
-    # Relations
-    session: Mapped["Session"] = relationship(back_populates="commit")
-    workspace: Mapped["Workspace"] = relationship(back_populates="commits")
-    parent: Mapped["Commit | None"] = remote_side(id)
-    children: Mapped[List["Commit"]] = relationship
-
-# models/issue.py
-class Issue(Base):
-    __tablename__ = "issues"
-
-    id: Mapped[str] = mapped_column(String, primary_key=True)
-    session_id: Mapped[str | None] = mapped_column(String, ForeignKey("sessions.id"))
-    workspace_id: Mapped[str] = mapped_column(String, ForeignKey("workspaces.id"))
-
-    title: Mapped[str] = mapped_column(String, nullable=False)
-    description: Mapped[str] = mapped_column(Text, nullable=False)
-    category: Mapped[IssueCategory] = mapped_column(SQLEnum(IssueCategory), nullable=False)
-
-    priority: Mapped[Priority] = mapped_column(SQLEnum(Priority), default="medium")
-    status: Mapped[IssueStatus] = mapped_column(SQLEnum(IssueStatus), default="open")
-
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    resolved_at: Mapped[datetime | None] = mapped_column(DateTime)
-
-    # Auto-generated by reviewer agent
-    estimated_cost: Mapped[float | None] = mapped_column(Float)
-    resolution_notes: Mapped[str | None] = mapped_column(Text)
-```
-
----
-
-## Connection Flow
-
-### Startup Sequence
-
-```
-1. User runs: agentflow session start "..."
-   ↓
-2. CLI loads config (~/.agentflow/config.json)
-   ↓
-3. If no config → Error or run 'agentflow init'
-   ↓
-4. DB connection test (async)
-   ↓
-5. Retrieve current workspace from config
-   ↓
-6. Create new session in DB
-   ↓
-7. Save session_id in local state (~/.agentflow/state.json)
-   ↓
-8. Display confirmation to user
-```
-
-### Connection Error Handling
-
-```python
-try:
-    db = get_db()
-    await db.connect()
-except ConnectionRefusedError:
-    typer.echo("❌ Cannot connect to database.")
-    typer.echo("💡 Run 'agentflow config test' to diagnose.")
-    raise typer.Exit(1)
-except AuthenticationError:
-    typer.echo("❌ Authentication failed. Check your credentials.")
-    typer.echo("💡 Run 'agentflow init' to reconfigure.")
-    raise typer.Exit(1)
-```
-
----
-
-## Key Considerations
-
-### Performance & Connection Pooling
-
-- Use SQLAlchemy connection pool
-- Client-side connection pooling (don't reconnect on every command)
-- Async I/O to avoid blocking the CLI
-
-### Concurrency
-
-- If multiple agents work in parallel in the same workspace:
-  - Locks at session level
-  - DB transactions to avoid inconsistencies
-  - Eventual consistency for commits
-
-### Offline Mode
-
-- Allow working offline and sync later
-- Local command queue
-- `agentflow sync` to push data to DB
-
-### Extensibility
-
-- Plugin architecture to add custom commands
-- Hooks to execute code before/after commands
-- Custom output formatters
-
----
-
-## Implementation Plan
-
-### Phase 1 - Setup & Configuration
-1. Initialize Python project (pyproject.toml, uv)
-2. Base package structure
-3. Data models with SQLAlchemy
-4. Local configuration system
-5. `agentflow init` command
-
-### Phase 2 - CLI Core
-1. Workspace management commands
-2. Session commands (start, log, commit, abort)
-3. Local state for tracking active session
-4. `agentflow log` command (history)
-
-### Phase 3 - Issues & Feedback
-1. Issue system
-2. `agentflow issue` commands (create, list, resolve)
-3. Basic reviewer agent
-
-### Phase 4 - Knowledge Base
-1. Documentation storage
-2. Simple search (keyword)
-3. `agentflow docs` commands
-
-### Phase 5 - Intelligence
-1. A/B testing framework for personalities
-2. Pattern detection (offline)
-3. Cost tracking
-
-### Phase 6 - Polish
-1. Output formatting (tables, rich text)
-2. Command auto-completion
-3. Tests and documentation
-
----
-
-## Complete Workflow Example
-
-```
-1. Human creates a task in a Workspace
-   ↓
-2. Orchestrator selects an agent (based on A/B tested personality)
-   ↓
-3. Agent reads internal documentation (RAG) to understand context
-   ↓
-4. Agent reads previous commits to resume where work stopped
-   ↓
-5. Agent works on the task
-   ↓
-6. If problem → Agent creates an Issue
-   ↓
-7. Agent Reviewer prioritizes the issue
-   ↓
-8. Agent finishes session → Creates a Commit with summary
-   ↓
-9. Agent Pattern Analyzer analyzes the commit:
-    - Identifies patterns
-    - Suggests improvements
-    - Updates documentation
-   ↓
-10. Costs are tracked and analyzed
-   ↓
-11. Next agent can resume with full context
-```
-
----
-
-## Success Criteria
-
-- ✅ Agents can seamlessly track work sessions
-- ✅ Historical context is easily accessible
-- ✅ Issues are systematically captured and prioritized
-- ✅ Knowledge base grows organically from agent interactions
-- ✅ Costs are transparent and optimized
-- ✅ System is agent-friendly (simple CLI commands)
-- ✅ Workspaces provide proper isolation
-- ✅ A/B testing continuously improves agent effectiveness
+**GitHub Integration:**
+- `github_pr_opened` - Pull request opened on GitHub
+- `github_pr_merged` - Pull request merged to main
+- `github_issue_assigned` - Issue assigned via GitHub
+
+**System Events:**
+- `kpi_updated` - Agent's KPIs recalculated (automatic)
+- `trust_score_changed` - Agent's trust score updated (automatic)
+
+**Knowledge:**
+- `wiki_contribution` - Agent proposes a wiki entry
+
+### Manual vs Automatic Events
+
+**Manual Events** - Created by agents:
+- All session events
+- All communication events
+- Task-related events
+- Code review events
+- Wiki contributions
+
+**Automatic Events** - Triggered by the system:
+- `kpi_updated` - After significant actions (PR merged, task completed)
+- `trust_score_changed` - When performance metrics change
+- `github_pr_merged` - When GitHub webhook reports merge
+- `github_issue_assigned` - When GitHub webhook reports assignment
+
+### Analogy
+
+Think of it like a **company logbook** or **activity feed**, not like git:
+- Every action is recorded
+- History is preserved
+- You can review what happened
+- But you can't undo or branch events
+
+## KPI System (Key Performance Indicators)
+
+Each agent has a set of KPIs to track their performance and guide their decisions.
+
+### KPI Structure
+
+- **Maximization KPIs** - Metrics to increase (e.g., code quality, tasks completed, positive feedback)
+- **Minimization KPIs** - Metrics to decrease (e.g., bugs introduced, time to complete, errors reported)
+
+### KPI Visibility
+
+- **Agent access** - Each agent can view their own KPIs to understand their objectives and performance
+- **Hierarchical review** - Direct supervisors analyze and evaluate subordinate KPIs
+- **Performance tracking** - KPIs evolve over time as agents work and improve
+
+### Examples
+
+**Python Developer KPIs:**
+- Maximize: Code coverage, feature completion rate, positive code review feedback
+- Minimize: Bug count, deployment failures, code churn
+
+**Tech Lead KPIs:**
+- Maximize: Team productivity, successful project deliveries, team satisfaction
+- Minimize: Blockers, technical debt accumulation, deployment issues
+
+**CTO KPIs:**
+- Maximize: System reliability, innovation adoption, cross-team efficiency
+- Minimize: Downtime, security incidents, cost inefficiencies
+
+## Knowledge Base & Memory
+
+### Internal Wiki (Management Feature)
+
+AgentFlow maintains an internal knowledge base where organizational knowledge is accumulated and preserved:
+
+**What Goes in the Wiki:**
+- Lessons learned from projects
+- Architectural decisions and their rationale
+- Best practices and patterns used
+- Solutions to common problems
+- Troubleshooting guides
+- Documentation of processes and workflows
+
+**Wiki Management:**
+- **CEO-managed** - Only the CEO (human) can validate wiki entries
+- **Versioned** - All changes are tracked with full history
+- **High-level editing** - Only organization-level agents can propose entries
+- **Not a base task** - Wiki contributions are not assigned to executing agents
+
+**Wiki Access:**
+- All agents can pull and read wiki articles via CLI
+- High-level agents can propose new entries for CEO approval
+- Searchable knowledge base
+- Organized by tags, projects, topics
+
+**Value:**
+- Avoids repeating the same mistakes
+- Accelerates onboarding of new agents
+- Preserves institutional knowledge
+- Enables continuous improvement
+
+### Agent Memory (TBD)
+
+The exact mechanism for how agents remember and utilize past information is still being defined. This may include:
+- Personal agent memory (what did I work on?)
+- Shared project memory (what did we accomplish?)
+- Organization-wide patterns (how do we do things?)
