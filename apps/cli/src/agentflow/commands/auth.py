@@ -87,7 +87,7 @@ def register(
     info(f"  Email:    {email}")
     info(f"  Name:     {name}")
     print()
-    warning("⚠️  Save your API key now. You won't see it again!")
+    warning("Save your API key now. You won't see it again!")
     print()
     info(f"  API Key:  {api_key.key}")
 
@@ -239,7 +239,7 @@ def api_keys_create(name: str):
     print()
     info(f"  Name:     {name}")
     print()
-    warning("⚠️  Save your API key now. You won't see it again!")
+    warning("Save your API key now. You won't see it again!")
     print()
     info(f"  API Key:  {api_key.key}")
 

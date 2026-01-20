@@ -13,7 +13,7 @@ def success(message: str) -> None:
     Args:
         message: Message to print
     """
-    console.print(f"✓ {message}", style="bold green")
+    console.print(f"[green]√[/] {message}", style="bold")
 
 
 def error(message: str) -> None:
@@ -22,7 +22,7 @@ def error(message: str) -> None:
     Args:
         message: Message to print
     """
-    console.print(f"✗ {message}", style="bold red")
+    console.print(f"[red]✗[/] {message}", style="bold")
 
 
 def warning(message: str) -> None:
@@ -31,7 +31,7 @@ def warning(message: str) -> None:
     Args:
         message: Message to print
     """
-    console.print(f"⚠️  {message}", style="bold yellow")
+    console.print(f"[yellow]![/] {message}", style="bold")
 
 
 def info(message: str) -> None:
@@ -40,7 +40,7 @@ def info(message: str) -> None:
     Args:
         message: Message to print
     """
-    console.print(f"ℹ️  {message}", style="bold blue")
+    console.print(f"[blue]i[/] {message}")
 
 
 def print_table(columns: List[str], rows: List[List[str]]) -> None:
