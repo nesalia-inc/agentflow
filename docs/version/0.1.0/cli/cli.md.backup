@@ -1,0 +1,2878 @@
+# CLI Specification - v0.1.0
+
+**Version**: 0.1.0-pre
+**Date**: 2025-02-03
+**Status**: Draft
+**Author**: AgentFlow Team
+
+---
+
+## Overview
+
+This document specifies the **agent-first CLI interface** for AgentFlow v0.1.0. The system uses **two separate CLIs** for security:
+
+### 1. `agentflow` - Human/CEO CLI
+Full-featured CLI for human users with complete control:
+- Create organizations, projects, roles, agents
+- Assign tasks and manage everything
+- View all tasks and agents
+- **Requires human authentication** (email/password)
+
+### 2. `agentflow-agent` - Agent CLI
+Restricted CLI for AI agents with limited permissions:
+- View only assigned tasks
+- Work on own tasks
+- Cannot exit to CEO mode
+- Cannot create/modify other agents
+- **Authenticated via agent token**
+
+### Security Model
+
+```
+┌────────────────────────────────────────────────────────┐
+│              agentflow (Human CLI)                     │
+│  - Full CEO permissions                                │
+│  - Can create/modify everything                        │
+│  - Auth: email + password                              │
+│  - Commands: org, project, role, agent, task create...│
+└────────────────────────────────────────────────────────┘
+                         │
+                         │ agent launch (generates token)
+                         ▼
+┌────────────────────────────────────────────────────────┐
+│           agentflow-agent (AI Agent CLI)               │
+│  - Limited to agent's own tasks                        │
+│  - Role-based permissions (level 1-10)                 │
+│  - Auth: agent_id + api_token                          │
+│  - Commands: task list/start/complete only             │
+│  - NO exit, NO CEO commands                            │
+└────────────────────────────────────────────────────────┘
+```
+
+### Design Principles
+
+- **100% non-interactive**: All operations use flags/arguments, no prompts
+- **Agent-friendly**: AI agents can execute commands without blocking
+- **JSON-first**: All commands return structured JSON output
+- **Security-first**: Two-CLI system prevents privilege escalation
+- **Role hierarchy**: Level-based permissions (1-10) prevent abuse
+
+---
+
+## CLI Structure
+
+### Human CLI (`agentflow`)
+
+```
+agentflow <command> <subcommand> [flags]
+```
+
+### Agent CLI (`agentflow-agent`)
+
+```
+agentflow-agent <command> <subcommand> [flags]
+```
+
+### Command Categories
+
+| Category | Human CLI | Agent CLI |
+|----------|-----------|-----------|
+| **Auth** | `register`, `login`, `logout`, `status` | `status` (token-based) |
+| **Role** | `create`, `list`, `view`, `update`, `delete`, `add-document`, `list-documents`, `remove-document` | `view` (own only) |
+| **Org** | `create`, `list`, `view`, `use`, `delete` | ❌ Not available |
+| **Project** | `create`, `list`, `view`, `use`, `delete` | ❌ Not available |
+| **Agent** | `create`, `list`, `view`, `update`, `delete`, `launch` | `stats` (own only) |
+| **Version** | `create`, `list`, `view`, `release`, `delete` | ❌ Not available |
+| **Task** | `create`, `list`, `view`, `start`, `complete`, `block`, `unblock`, `assign`, `update`, `delete` | `list`, `view`, `start`, `complete`, `block`, `unblock` (own only) |
+| **Context** | `use` (combined org+project) | Built-in (from token) |
+
+---
+
+## Response Format
+
+### Success Response
+
+```json
+{
+  "success": true,
+  "data": {
+    // Entity-specific data
+  },
+  "metadata": {
+    "timestamp": "2025-02-03T10:00:00Z",
+    "request_id": "req_abc123"
+  }
+}
+```
+
+### Error Response
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": "NOT_FOUND",
+    "message": "Organization not found",
+    "details": {}
+  }
+}
+```
+
+### Output Formats
+
+| Flag | Description |
+|------|-------------|
+| `--format json` | JSON output (default) |
+| `--format table` | Human-readable ASCII table |
+| `--format csv` | CSV for parsing |
+| `--format raw` | IDs only (for piping) |
+
+---
+
+## Authentication Commands
+
+### `agentflow auth register`
+
+Register a new user account.
+
+```bash
+agentflow auth register \
+  --email <email> \
+  --password <password> \
+  --name <name>
+```
+
+**Flags**:
+- `--email` (required): User email address
+- `--password` (required): Password
+- `--name` (required): Full name
+
+**Response**:
+```json
+{
+  "success": true,
+  "data": {
+    "user": {
+      "id": "user_123",
+      "email": "david@example.com",
+      "name": "David",
+      "created_at": "2025-02-03T10:00:00Z"
+    },
+    "api_key": "ak_live_..."
+  },
+  "message": "Account created successfully"
+}
+```
+
+**Error Codes**:
+- `EMAIL_EXISTS`: Email already registered
+- `INVALID_EMAIL`: Email format invalid
+- `WEAK_PASSWORD`: Password too weak
+
+---
+
+### `agentflow auth login`
+
+Authenticate and store API key locally.
+
+```bash
+agentflow auth login \
+  --email <email> \
+  --password <password>
+```
+
+**Alternative** (with API key):
+```bash
+agentflow auth login --api-key <api_key>
+```
+
+**Flags**:
+- `--email`: User email
+- `--password`: User password
+- `--api-key`: API key (alternative to email+password)
+
+**Response**:
+```json
+{
+  "success": true,
+  "data": {
+    "user": {
+      "id": "user_123",
+      "email": "david@example.com",
+      "name": "David"
+    },
+    "api_key": "ak_live_..."
+  },
+  "message": "Logged in successfully"
+}
+```
+
+**Side Effect**: Writes to `~/.agentflow/context.json`
+
+**Error Codes**:
+- `INVALID_CREDENTIALS`: Email or password incorrect
+- `USER_NOT_FOUND`: User does not exist
+- `INVALID_API_KEY`: API key invalid
+
+---
+
+### `agentflow auth logout`
+
+Clear local credentials.
+
+```bash
+agentflow auth logout
+```
+
+**Response**:
+```json
+{
+  "success": true,
+  "message": "Logged out successfully"
+}
+```
+
+**Side Effect**: Removes API key from `~/.agentflow/context.json`
+
+---
+
+### `agentflow auth status`
+
+Check authentication status.
+
+```bash
+agentflow auth status
+```
+
+**Response (authenticated)**:
+```json
+{
+  "success": true,
+  "data": {
+    "authenticated": true,
+    "user": {
+      "id": "user_123",
+      "email": "david@example.com",
+      "name": "David"
+    },
+    "context": {
+      "active_org": "acme",
+      "active_project": "website",
+      "active_version": null
+    }
+  }
+}
+```
+
+**Response (not authenticated)**:
+```json
+{
+  "success": true,
+  "data": {
+    "authenticated": false,
+    "context": null
+  }
+}
+```
+
+---
+
+## Role Commands
+
+Roles are **global templates** defined at the user level, independent of organizations. A role defines skills, competencies, rules, and **authority level** (1-10) for security.
+
+### `agentflow role create`
+
+Create a new role (global, no organization required).
+
+```bash
+agentflow role create \
+  --name <name> \
+  --slug <slug> \
+  --level <level> \
+  [--description <description>]
+```
+
+**Flags**:
+- `--name` (required): Role name
+- `--slug` (required): URL-friendly identifier
+- `--level` (required): Authority level (1-10)
+  - **1-2**: Junior roles (basic tasks)
+  - **3-4**: Senior roles (complex tasks)
+  - **5-6**: Lead roles (can manage juniors)
+  - **7-8**: Architect roles (strategic decisions)
+  - **9-10**: C-level roles (executive decisions)
+- `--description`: Role description
+
+**Examples**:
+```bash
+# Junior role
+agentflow role create \
+  --name "Junior Developer" \
+  --slug "junior-dev" \
+  --level 1
+
+# Senior role
+agentflow role create \
+  --name "Senior Developer" \
+  --slug "senior-dev" \
+  --level 3
+
+# CTO role
+agentflow role create \
+  --name "CTO" \
+  --slug "cto" \
+  --level 10
+```
+
+**Response**:
+```json
+{
+  "success": true,
+  "data": {
+    "role": {
+      "id": "role_abc123",
+      "user_id": "user_123",
+      "name": "Frontend Developer",
+      "slug": "frontend-dev",
+      "level": 3,
+      "description": "Expert React, TypeScript et UX",
+      "document_count": 0,
+      "created_at": "2025-02-03T10:00:00Z"
+    }
+  },
+  "message": "Role created successfully"
+}
+```
+
+**Error Codes**:
+- `SLUG_EXISTS`: Role slug already exists for this user
+- `INVALID_SLUG`: Slug format invalid
+- `INVALID_LEVEL`: Level must be between 1 and 10
+- `UNAUTHENTICATED`: User not logged in
+
+---
+
+### `agentflow role list`
+
+List all roles for the current user.
+
+```bash
+agentflow role list [--format <format>]
+```
+
+**Flags**:
+- `--format`: Output format (json|table|csv|raw, default: json)
+
+**Response**:
+```json
+{
+  "success": true,
+  "data": {
+    "roles": [
+      {
+        "id": "role_abc123",
+        "name": "Frontend Developer",
+        "slug": "frontend-dev",
+        "description": "Expert React, TypeScript et UX",
+        "document_count": 3,
+        "created_at": "2025-02-03T10:00:00Z"
+      },
+      {
+        "id": "role_def456",
+        "name": "Backend Developer",
+        "slug": "backend-dev",
+        "description": "Expert Python, PostgreSQL, APIs",
+        "document_count": 5,
+        "created_at": "2025-02-03T11:00:00Z"
+      }
+    ],
+    "total": 2
+  }
+}
+```
+
+---
+
+### `agentflow role view`
+
+View role details and documents.
+
+```bash
+agentflow role view --slug <slug>
+```
+
+**Flags**:
+- `--slug` (required): Role slug
+
+**Response**:
+```json
+{
+  "success": true,
+  "data": {
+    "role": {
+      "id": "role_abc123",
+      "name": "Frontend Developer",
+      "slug": "frontend-dev",
+      "description": "Expert React, TypeScript et UX",
+      "created_at": "2025-02-03T10:00:00Z"
+    },
+    "documents": [
+      {
+        "id": "doc_123",
+        "title": "React Best Practices",
+        "content": "# React Best Practices\n\n- Use functional components...",
+        "created_at": "2025-02-03T10:30:00Z"
+      },
+      {
+        "id": "doc_456",
+        "title": "TypeScript Guidelines",
+        "content": "# TypeScript Guidelines\n\n...",
+        "created_at": "2025-02-03T11:00:00Z"
+      }
+    ],
+    "stats": {
+      "document_count": 2,
+      "agent_count": 5
+    }
+  }
+}
+```
+
+**Error Codes**:
+- `NOT_FOUND`: Role not found
+- `ACCESS_DENIED`: Role belongs to another user
+
+---
+
+### `agentflow role update`
+
+Update role properties.
+
+```bash
+agentflow role update \
+  --slug <slug> \
+  [--name <name>] \
+  [--description <description>]
+```
+
+**Flags**:
+- `--slug` (required): Role slug
+- `--name`: New name
+- `--description`: New description
+
+**Response**:
+```json
+{
+  "success": true,
+  "data": {
+    "role": {
+      "id": "role_abc123",
+      "name": "Senior Frontend Developer",
+      "slug": "frontend-dev",
+      "description": "Expert React, TypeScript, UX and Architecture",
+      "updated_at": "2025-02-03T12:00:00Z"
+    }
+  },
+  "message": "Role updated successfully"
+}
+```
+
+---
+
+### `agentflow role add-document`
+
+Add a document to a role.
+
+```bash
+agentflow role add-document \
+  --role <slug> \
+  --title <title> \
+  [--content <content>] \
+  [--file <path>]
+```
+
+**Flags**:
+- `--role` (required): Role slug
+- `--title` (required): Document title
+- `--content`: Document content (markdown)
+- `--file`: Path to markdown file (alternative to --content)
+
+**With content**:
+```bash
+agentflow role add-document \
+  --role "frontend-dev" \
+  --title "React Best Practices" \
+  --content "# React Best Practices
+
+- Use functional components with hooks
+- Implement proper error boundaries
+- Follow React performance optimization patterns
+- Always handle loading and error states
+- Use TypeScript for type safety"
+```
+
+**With file**:
+```bash
+agentflow role add-document \
+  --role "frontend-dev" \
+  --title "Coding Standards" \
+  --file ./standards/react.md
+```
+
+**Response**:
+```json
+{
+  "success": true,
+  "data": {
+    "document": {
+      "id": "doc_789",
+      "role_id": "role_abc123",
+      "title": "React Best Practices",
+      "content": "# React Best Practices...",
+      "created_at": "2025-02-03T13:00:00Z"
+    }
+  },
+  "message": "Document added to role frontend-dev"
+}
+```
+
+**Error Codes**:
+- `NOT_FOUND`: Role not found
+- `FILE_NOT_FOUND`: Specified file does not exist
+- `NO_CONTENT`: Must provide either --content or --file
+
+---
+
+### `agentflow role list-documents`
+
+List all documents in a role.
+
+```bash
+agentflow role list-documents --slug <slug> [--format <format>]
+```
+
+**Flags**:
+- `--slug` (required): Role slug
+- `--format`: Output format
+
+**Response**:
+```json
+{
+  "success": true,
+  "data": {
+    "role": {
+      "id": "role_abc123",
+      "name": "Frontend Developer",
+      "slug": "frontend-dev"
+    },
+    "documents": [
+      {
+        "id": "doc_123",
+        "title": "React Best Practices",
+        "created_at": "2025-02-03T10:30:00Z"
+      },
+      {
+        "id": "doc_456",
+        "title": "TypeScript Guidelines",
+        "created_at": "2025-02-03T11:00:00Z"
+      }
+    ],
+    "total": 2
+  }
+}
+```
+
+---
+
+### `agentflow role remove-document`
+
+Remove a document from a role.
+
+```bash
+agentflow role remove-document \
+  --role <slug> \
+  --document <document-id> \
+  --confirm
+```
+
+**Flags**:
+- `--role` (required): Role slug
+- `--document` (required): Document ID
+- `--confirm`: Required to prevent accidental deletion
+
+**Response**:
+```json
+{
+  "success": true,
+  "data": {
+    "deleted_document": {
+      "id": "doc_123",
+      "title": "React Best Practices"
+    }
+  },
+  "message": "Document removed from role"
+}
+```
+
+**Error Codes**:
+- `NOT_FOUND`: Role or document not found
+- `ACCESS_DENIED`: Document belongs to different role
+
+---
+
+### `agentflow role delete`
+
+Delete a role.
+
+```bash
+agentflow role delete --slug <slug> --confirm
+```
+
+**Flags**:
+- `--slug` (required): Role slug
+- `--confirm`: Required to prevent accidental deletion
+
+**Response**:
+```json
+{
+  "success": true,
+  "data": {
+    "deleted_role": {
+      "id": "role_abc123",
+      "name": "Frontend Developer",
+      "slug": "frontend-dev"
+    }
+  },
+  "message": "Role deleted successfully"
+}
+```
+
+**Error Codes**:
+- `NOT_FOUND`: Role not found
+- `ACCESS_DENIED`: Role belongs to another user
+- `IN_USE`: Role is used by existing agents (must delete agents first)
+
+---
+
+## Organization Commands
+
+### `agentflow org create`
+
+Create a new organization.
+
+```bash
+agentflow org create \
+  --name <name> \
+  --slug <slug> \
+  [--description <description>]
+```
+
+**Flags**:
+- `--name` (required): Organization name
+- `--slug` (required): URL-friendly identifier
+- `--description`: Organization description
+
+**Response**:
+```json
+{
+  "success": true,
+  "data": {
+    "organization": {
+      "id": "org_123",
+      "name": "Acme Corp",
+      "slug": "acme",
+      "description": "Tech startup",
+      "owner_id": "user_123",
+      "created_at": "2025-02-03T10:00:00Z"
+    }
+  }
+}
+```
+
+**Error Codes**:
+- `SLUG_EXISTS`: Organization slug already exists
+- `INVALID_SLUG`: Slug format invalid
+- `UNAUTHENTICATED`: User not logged in
+
+---
+
+### `agentflow org list`
+
+List all organizations the user is a member of.
+
+```bash
+agentflow org list [--format <format>]
+```
+
+**Flags**:
+- `--format`: Output format (json|table|csv|raw, default: json)
+
+**Response**:
+```json
+{
+  "success": true,
+  "data": {
+    "organizations": [
+      {
+        "id": "org_123",
+        "name": "Acme Corp",
+        "slug": "acme",
+        "role": "owner",
+        "created_at": "2025-02-03T10:00:00Z"
+      },
+      {
+        "id": "org_456",
+        "name": "Another Org",
+        "slug": "another-org",
+        "role": "member",
+        "created_at": "2025-02-01T10:00:00Z"
+      }
+    ],
+    "total": 2
+  }
+}
+```
+
+---
+
+### `agentflow org view`
+
+View organization details.
+
+```bash
+agentflow org view --slug <slug>
+```
+
+**Flags**:
+- `--slug` (required): Organization slug
+
+**Response**:
+```json
+{
+  "success": true,
+  "data": {
+    "organization": {
+      "id": "org_123",
+      "name": "Acme Corp",
+      "slug": "acme",
+      "description": "Tech startup",
+      "owner": {
+        "id": "user_123",
+        "email": "david@example.com",
+        "name": "David"
+      },
+      "created_at": "2025-02-03T10:00:00Z"
+    },
+    "projects": [
+      {
+        "id": "proj_123",
+        "name": "Website Redesign",
+        "slug": "website",
+        "created_at": "2025-02-03T11:00:00Z"
+      }
+    ],
+    "members": [
+      {
+        "id": "user_123",
+        "email": "david@example.com",
+        "name": "David",
+        "role": "owner"
+      }
+    ],
+    "stats": {
+      "project_count": 1,
+      "member_count": 1
+    }
+  }
+}
+```
+
+**Error Codes**:
+- `NOT_FOUND`: Organization not found
+- `ACCESS_DENIED`: User not a member
+
+---
+
+### `agentflow org use`
+
+Set active organization context.
+
+```bash
+agentflow org use --slug <slug>
+```
+
+**Flags**:
+- `--slug` (required): Organization slug
+
+**Response**:
+```json
+{
+  "success": true,
+  "data": {
+    "context": {
+      "active_org": "acme",
+      "active_project": null,
+      "active_version": null
+    },
+    "organization": {
+      "id": "org_123",
+      "name": "Acme Corp",
+      "slug": "acme"
+    }
+  },
+  "message": "Active organization set to Acme Corp (acme)"
+}
+```
+
+**Side Effect**: Updates `~/.agentflow/context.json`
+
+**Error Codes**:
+- `NOT_FOUND`: Organization not found
+- `ACCESS_DENIED`: User not a member
+
+---
+
+### `agentflow org delete`
+
+Delete an organization.
+
+```bash
+agentflow org delete --slug <slug> --confirm
+```
+
+**Flags**:
+- `--slug` (required): Organization slug
+- `--confirm`: Required to prevent accidental deletion
+
+**Response**:
+```json
+{
+  "success": true,
+  "data": {
+    "deleted_organization": {
+      "id": "org_123",
+      "name": "Acme Corp",
+      "slug": "acme"
+    }
+  },
+  "message": "Organization deleted successfully"
+}
+```
+
+**Error Codes**:
+- `NOT_FOUND`: Organization not found
+- `ACCESS_DENIED`: User not owner
+- `NOT_EMPTY`: Organization has projects (must delete first)
+
+---
+
+## Project Commands
+
+### `agentflow project create`
+
+Create a new project.
+
+```bash
+agentflow project create \
+  --org <slug> \
+  --name <name> \
+  --slug <slug> \
+  [--description <description>] \
+  [--github-url <url>]
+```
+
+**Flags**:
+- `--org`: Organization slug (optional if org active)
+- `--name` (required): Project name
+- `--slug` (required): Project slug
+- `--description`: Project description
+- `--github-url`: GitHub repository URL
+
+**With active org**:
+```bash
+agentflow project create \
+  --name "Website Redesign" \
+  --slug "website"
+```
+
+**Response**:
+```json
+{
+  "success": true,
+  "data": {
+    "project": {
+      "id": "proj_123",
+      "organization_id": "org_123",
+      "name": "Website Redesign",
+      "slug": "website",
+      "description": "Complete overhaul",
+      "github_url": "https://github.com/acme/website",
+      "is_active": true,
+      "created_at": "2025-02-03T10:00:00Z"
+    }
+  }
+}
+```
+
+**Error Codes**:
+- `ORG_NOT_SET`: No active org and --org not provided
+- `SLUG_EXISTS`: Project slug already exists in org
+- `NOT_FOUND`: Organization not found
+
+---
+
+### `agentflow project list`
+
+List projects in an organization.
+
+```bash
+agentflow project list [--org <slug>] [--format <format>]
+```
+
+**Flags**:
+- `--org`: Organization slug (optional if org active)
+- `--format`: Output format (json|table|csv|raw)
+
+**Response**:
+```json
+{
+  "success": true,
+  "data": {
+    "organization": {
+      "id": "org_123",
+      "name": "Acme Corp",
+      "slug": "acme"
+    },
+    "projects": [
+      {
+        "id": "proj_123",
+        "name": "Website Redesign",
+        "slug": "website",
+        "is_active": true,
+        "version_count": 3,
+        "task_count": 35,
+        "created_at": "2025-02-03T10:00:00Z"
+      }
+    ],
+    "total": 1
+  }
+}
+```
+
+---
+
+### `agentflow project view`
+
+View project details.
+
+```bash
+agentflow project view \
+  --org <slug> \
+  --slug <slug>
+```
+
+**Flags**:
+- `--org`: Organization slug
+- `--slug` (required): Project slug
+
+**Response**:
+```json
+{
+  "success": true,
+  "data": {
+    "project": {
+      "id": "proj_123",
+      "name": "Website Redesign",
+      "slug": "website",
+      "description": "Complete overhaul",
+      "github_url": "https://github.com/acme/website",
+      "is_active": true,
+      "created_at": "2025-02-03T10:00:00Z"
+    },
+    "versions": [
+      {
+        "id": "ver_123",
+        "version": "1.0.0",
+        "name": "Major release",
+        "status": "in_progress",
+        "task_count": 15,
+        "completed_tasks": 3
+      }
+    ],
+    "stats": {
+      "version_count": 3,
+      "total_tasks": 35,
+      "completed_tasks": 23
+    }
+  }
+}
+```
+
+---
+
+### `agentflow project use`
+
+Set active project context.
+
+```bash
+agentflow project use --slug <slug>
+```
+
+**Flags**:
+- `--slug` (required): Project slug
+
+**Response**:
+```json
+{
+  "success": true,
+  "data": {
+    "context": {
+      "active_org": "acme",
+      "active_project": "website",
+      "active_version": null
+    },
+    "project": {
+      "id": "proj_123",
+      "name": "Website Redesign",
+      "slug": "website"
+    }
+  },
+  "message": "Active project set to Website Redesign (website)"
+}
+```
+
+---
+
+### `agentflow project delete`
+
+Delete a project.
+
+```bash
+agentflow project delete \
+  --org <slug> \
+  --slug <slug> \
+  --confirm
+```
+
+**Flags**:
+- `--org`: Organization slug
+- `--slug` (required): Project slug
+- `--confirm`: Required to prevent accidental deletion
+
+**Response**:
+```json
+{
+  "success": true,
+  "data": {
+    "deleted_project": {
+      "id": "proj_123",
+      "name": "Website Redesign",
+      "slug": "website"
+    }
+  }
+}
+```
+
+---
+
+## Context Shortcut
+
+### `agentflow use`
+
+Set organization and project in one command.
+
+```bash
+agentflow use --org <slug> --project <slug>
+```
+
+**Flags**:
+- `--org` (required): Organization slug
+- `--project` (required): Project slug
+
+**Response**:
+```json
+{
+  "success": true,
+  "data": {
+    "context": {
+      "active_org": "acme",
+      "active_project": "website",
+      "active_version": null
+    }
+  },
+  "message": "Context set to acme/website"
+}
+```
+
+---
+
+## Agent Commands
+
+Agents are **instances of roles** assigned to organizations or projects. While roles are global templates, agents are the actual "workers" in your organization.
+
+### `agentflow agent create`
+
+Create a new agent (instance of a role in an organization/project).
+
+```bash
+agentflow agent create \
+  --org <slug> \
+  --role <slug> \
+  --name <name> \
+  [--project <slug>]
+```
+
+**Flags**:
+- `--org`: Organization slug (optional if org active)
+- `--role` (required): Role slug to instantiate
+- `--name` (required): Agent name (e.g., "Alice", "Bob")
+- `--project`: Project slug (optional, if not specified agent is org-level)
+
+**Organization-level agent**:
+```bash
+agentflow agent create \
+  --org "acme" \
+  --role "frontend-dev" \
+  --name "Alice"
+```
+
+**Project-level agent**:
+```bash
+agentflow agent create \
+  --org "acme" \
+  --project "website" \
+  --role "frontend-dev" \
+  --name "Bob"
+```
+
+**With active context**:
+```bash
+agentflow org use --slug "acme"
+agentflow agent create --role "frontend-dev" --name "Alice"
+```
+
+**Response**:
+```json
+{
+  "success": true,
+  "data": {
+    "agent": {
+      "id": "agent_xyz789",
+      "agent_code": "AG-001",
+      "organization_id": "org_123",
+      "project_id": null,
+      "role_id": "role_abc123",
+      "name": "Alice",
+      "status": "active",
+      "trust_score": 50,
+      "role": {
+        "id": "role_abc123",
+        "name": "Frontend Developer",
+        "slug": "frontend-dev"
+      },
+      "created_at": "2025-02-03T10:00:00Z"
+    }
+  },
+  "message": "Agent created: Alice (Frontend Developer)"
+}
+```
+
+**Error Codes**:
+- `ORG_NOT_SET`: No active org and --org not provided
+- `ROLE_NOT_FOUND`: Role does not exist
+- `INVALID_ROLE`: Role belongs to different user
+
+---
+
+### `agentflow agent list`
+
+List agents in an organization or project.
+
+```bash
+agentflow agent list \
+  [--org <slug>] \
+  [--project <slug>] \
+  [--format <format>]
+```
+
+**Flags**:
+- `--org`: Organization slug
+- `--project`: Project slug (optional, filters to project agents)
+- `--format`: Output format
+
+**List all org agents**:
+```bash
+agentflow agent list --org "acme"
+```
+
+**List project agents**:
+```bash
+agentflow agent list --org "acme" --project "website"
+```
+
+**With active context**:
+```bash
+agentflow agent list
+```
+
+**Response**:
+```json
+{
+  "success": true,
+  "data": {
+    "organization": {
+      "id": "org_123",
+      "name": "Acme Corp",
+      "slug": "acme"
+    },
+    "project": {
+      "id": "proj_123",
+      "name": "Website Redesign",
+      "slug": "website"
+    },
+    "agents": [
+      {
+        "id": "agent_xyz789",
+        "agent_code": "AG-001",
+        "name": "Alice",
+        "status": "active",
+        "trust_score": 65,
+        "role": {
+          "name": "Frontend Developer",
+          "slug": "frontend-dev"
+        },
+        "assigned_task_count": 3,
+        "completed_task_count": 12
+      },
+      {
+        "id": "agent_def456",
+        "agent_code": "AG-002",
+        "name": "Bob",
+        "status": "active",
+        "trust_score": 72,
+        "role": {
+          "name": "Frontend Developer",
+          "slug": "frontend-dev"
+        },
+        "assigned_task_count": 2,
+        "completed_task_count": 8
+      }
+    ],
+    "total": 2
+  }
+}
+```
+
+---
+
+### `agentflow agent view`
+
+View agent details.
+
+```bash
+agentflow agent view \
+  --org <slug> \
+  --agent <agent-id>
+```
+
+**Flags**:
+- `--org`: Organization slug
+- `--agent` (required): Agent ID
+
+**Response**:
+```json
+{
+  "success": true,
+  "data": {
+    "agent": {
+      "id": "agent_xyz789",
+      "agent_code": "AG-001",
+      "name": "Alice",
+      "status": "active",
+      "trust_score": 65,
+      "created_at": "2025-02-03T10:00:00Z"
+    },
+    "organization": {
+      "id": "org_123",
+      "name": "Acme Corp",
+      "slug": "acme"
+    },
+    "project": {
+      "id": "proj_123",
+      "name": "Website Redesign",
+      "slug": "website"
+    },
+    "role": {
+      "id": "role_abc123",
+      "name": "Frontend Developer",
+      "slug": "frontend-dev",
+      "description": "Expert React, TypeScript et UX"
+    },
+    "role_documents": [
+      {
+        "id": "doc_123",
+        "title": "React Best Practices",
+        "content": "# React Best Practices..."
+      }
+    ],
+    "assigned_tasks": [
+      {
+        "id": "task_abc123",
+        "title": "Build homepage",
+        "status": "in_progress",
+        "priority": "P0",
+        "version": "1.0.0"
+      }
+    ],
+    "stats": {
+      "total_assigned": 15,
+      "completed": 12,
+      "in_progress": 2,
+      "blocked": 1,
+      "completion_rate": 0.8
+    }
+  }
+}
+```
+
+**Error Codes**:
+- `NOT_FOUND`: Agent not found
+- `ACCESS_DENIED`: Agent belongs to different organization
+
+---
+
+### `agentflow agent update`
+
+Update agent properties.
+
+```bash
+agentflow agent update \
+  --org <slug> \
+  --agent <agent-id> \
+  [--name <name>] \
+  [--status <status>]
+```
+
+**Flags**:
+- `--org`: Organization slug
+- `--agent` (required): Agent ID
+- `--name`: New name
+- `--status`: New status (active|inactive|probation)
+
+**Response**:
+```json
+{
+  "success": true,
+  "data": {
+    "agent": {
+      "id": "agent_xyz789",
+      "name": "Alice Senior",
+      "status": "active",
+      "updated_at": "2025-02-03T14:00:00Z"
+    }
+  },
+  "message": "Agent updated successfully"
+}
+```
+
+---
+
+### `agentflow agent delete`
+
+Delete an agent.
+
+```bash
+agentflow agent delete \
+  --org <slug> \
+  --agent <agent-id> \
+  --confirm
+```
+
+**Flags**:
+- `--org`: Organization slug
+- `--agent` (required): Agent ID
+- `--confirm`: Required to prevent accidental deletion
+
+**Response**:
+```json
+{
+  "success": true,
+  "data": {
+    "deleted_agent": {
+      "id": "agent_xyz789",
+      "name": "Alice",
+      "agent_code": "AG-001"
+    }
+  },
+  "message": "Agent deleted successfully"
+}
+```
+
+**Error Codes**:
+- `NOT_FOUND`: Agent not found
+- `ACCESS_DENIED`: Agent belongs to different organization
+- `HAS_ASSIGNED_TASKS`: Agent has assigned tasks (must reassign first)
+
+---
+
+### `agentflow agent launch`
+
+Generate an agent token for the agent CLI to use. This is the secure way to allow an agent to work.
+
+```bash
+agentflow agent launch \
+  --agent <agent-id> \
+  [--output <path>]
+```
+
+**Flags**:
+- `--agent` (required): Agent ID or agent_code
+- `--output`: Output path for token file (default: `~/.agentflow/agents/<agent-id>/token.json`)
+
+**Response**:
+```json
+{
+  "success": true,
+  "data": {
+    "agent": {
+      "id": "agent_xyz789",
+      "name": "Alice",
+      "agent_code": "AG-001",
+      "level": 3
+    },
+    "token_file": "~/.agentflow/agents/agent_xyz789/token.json",
+    "command": "agentflow-agent --config ~/.agentflow/agents/agent_xyz789/token.json"
+  },
+  "message": "Agent token generated. Agent can now start with the command above."
+}
+```
+
+**Side Effect**: Creates token file with restricted permissions
+
+**Token File Structure** (`~/.agentflow/agents/agent_xyz789/token.json`):
+```json
+{
+  "agent_id": "agent_xyz789",
+  "agent_name": "Alice",
+  "api_key": "ak_agent_live_abc123...",
+  "base_url": "https://api.agentflow.io",
+  "org": {
+    "id": "org_123",
+    "name": "Acme Corp",
+    "slug": "acme"
+  },
+  "project": {
+    "id": "proj_123",
+    "name": "Website Redesign",
+    "slug": "website"
+  },
+  "role": {
+    "id": "role_abc123",
+    "name": "Frontend Developer",
+    "slug": "frontend-dev",
+    "level": 3
+  },
+  "permissions": [
+    "task:list:own",
+    "task:view:own",
+    "task:start:own",
+    "task:complete:own",
+    "task:block:own",
+    "task:unblock:own",
+    "role:view:own",
+    "agent:stats:own"
+  ],
+  "restrictions": {
+    "max_task_level": 3,
+    "can_create_agents": false,
+    "can_modify_org": false,
+    "can_view_all_tasks": false
+  },
+  "expires_at": "2025-02-10T00:00:00Z"
+}
+```
+
+**Error Codes**:
+- `NOT_FOUND`: Agent not found
+- `ACCESS_DENIED`: Agent belongs to different organization
+- `INACTIVE_AGENT`: Agent is inactive or on probation
+
+---
+
+## Agent CLI (`agentflow-agent`)
+
+The agent CLI is a separate, restricted executable that agents use to perform their tasks. It has no CEO commands and cannot "exit" to a higher privilege level.
+
+### `agentflow-agent` Usage
+
+```bash
+agentflow-agent --config <token-file> <command> [flags]
+```
+
+Or with environment variables:
+```bash
+export AGENTFLOW_TOKEN_FILE=~/.agentflow/agents/agent_xyz789/token.json
+agentflow-agent <command> [flags]
+```
+
+### Available Commands
+
+| Command | Description |
+|---------|-------------|
+| `status` | Show agent status and permissions |
+| `task list` | List own tasks only |
+| `task view` | View task details |
+| `task start` | Start working on a task |
+| `task complete` | Complete a task |
+| `task block` | Report a blocker |
+| `task unblock` | Remove blocker |
+| `role view` | View own role and documents |
+| `agent stats` | View own performance stats |
+
+### `agentflow-agent status`
+
+Show agent identity and permissions.
+
+```bash
+agentflow-agent status
+```
+
+**Response**:
+```json
+{
+  "success": true,
+  "data": {
+    "agent": {
+      "id": "agent_xyz789",
+      "name": "Alice",
+      "level": 3,
+      "trust_score": 65
+    },
+    "role": {
+      "name": "Frontend Developer",
+      "slug": "frontend-dev"
+    },
+    "permissions": [
+      "task:list:own",
+      "task:start:own",
+      "task:complete:own"
+    ],
+    "restrictions": {
+      "max_task_level": 3,
+      "can_create_agents": false
+    },
+    "context": {
+      "org": "acme",
+      "project": "website"
+    }
+  }
+}
+```
+
+### `agentflow-agent task list`
+
+List only tasks assigned to this agent.
+
+```bash
+agentflow-agent task list
+```
+
+**Response**:
+```json
+{
+  "success": true,
+  "data": {
+    "agent": "Alice",
+    "tasks": [
+      {
+        "id": "task_abc123",
+        "title": "Build homepage",
+        "status": "backlog",
+        "priority": "P0",
+        "required_level": 3,
+        "version": "1.0.0"
+      }
+    ],
+    "total": 1
+  }
+}
+```
+
+**Security**: Cannot use `--all` flag (not available)
+
+### `agentflow-agent task start`
+
+Start working on a task. Auto-assigns if not already assigned.
+
+```bash
+agentflow-agent task start --task-id <task-id>
+```
+
+**Response**:
+```json
+{
+  "success": true,
+  "data": {
+    "task": {
+      "id": "task_abc123",
+      "title": "Build homepage",
+      "status": "in_progress"
+    }
+  },
+  "message": "Task started and assigned to you (Alice)"
+}
+```
+
+**Security Checks**:
+- Task must be assigned to this agent OR unassigned
+- Task `required_level` must be ≤ agent's level
+- Cannot start tasks assigned to other agents
+
+**Error Codes**:
+- `TASK_LEVEL_TOO_HIGH`: Task requires higher authority level
+- `ASSIGNED_TO_OTHER`: Task is assigned to another agent
+
+### `agentflow-agent task complete`
+
+Complete a task.
+
+```bash
+agentflow-agent task complete \
+  --task-id <task-id> \
+  [--success <notes>]
+```
+
+**Security**: Can only complete own tasks
+
+### `agentflow-agent role view`
+
+View own role and documents.
+
+```bash
+agentflow-agent role view --slug <slug>
+```
+
+**Response**:
+```json
+{
+  "success": true,
+  "data": {
+    "role": {
+      "id": "role_abc123",
+      "name": "Frontend Developer",
+      "slug": "frontend-dev",
+      "level": 3
+    },
+    "documents": [
+      {
+        "id": "doc_123",
+        "title": "React Best Practices",
+        "content": "# React Best Practices..."
+      }
+    ]
+  }
+}
+```
+
+**Security**: Can only view own role
+
+### `agentflow-agent agent stats`
+
+View own performance stats.
+
+```bash
+agentflow-agent agent stats
+```
+
+**Response**:
+```json
+{
+  "success": true,
+  "data": {
+    "agent": {
+      "name": "Alice",
+      "trust_score": 65,
+      "level": 3
+    },
+    "stats": {
+      "total_assigned": 15,
+      "completed": 12,
+      "in_progress": 2,
+      "blocked": 1,
+      "completion_rate": 0.8
+    }
+  }
+}
+```
+
+### Unavailable Commands (Security)
+
+```bash
+agentflow-agent agent create  # ❌ Not available
+agentflow-agent org delete    # ❌ Not available
+agentflow-agent task list --all  # ❌ Not available
+agentflow-agent task assign    # ❌ Not available
+```
+
+---
+
+## Version Commands
+
+### `agentflow version create`
+
+Create a new version for a project.
+
+```bash
+agentflow version create \
+  --org <slug> \
+  --project <slug> \
+  --version <version> \
+  [--name <name>] \
+  [--description <description>]
+```
+
+**Flags**:
+- `--org`: Organization slug
+- `--project`: Project slug
+- `--version` (required): Version number (e.g., "1.0.0")
+- `--name`: Version name (e.g., "Major release")
+- `--description`: Version description
+
+**With active context**:
+```bash
+agentflow version create \
+  --version "1.0.0" \
+  --name "Major release"
+```
+
+**Response**:
+```json
+{
+  "success": true,
+  "data": {
+    "version": {
+      "id": "ver_123",
+      "project_id": "proj_123",
+      "version": "1.0.0",
+      "name": "Major release",
+      "description": "First stable release",
+      "status": "draft",
+      "task_count": 0,
+      "created_at": "2025-02-03T10:00:00Z"
+    }
+  }
+}
+```
+
+**Error Codes**:
+- `PROJECT_NOT_SET`: No active project and --project not provided
+- `VERSION_EXISTS`: Version already exists in project
+- `INVALID_VERSION`: Version format invalid (should be semver)
+
+---
+
+### `agentflow version list`
+
+List versions in a project.
+
+```bash
+agentflow version list \
+  [--org <slug>] \
+  [--project <slug>] \
+  [--format <format>]
+```
+
+**Flags**:
+- `--org`: Organization slug
+- `--project`: Project slug
+- `--format`: Output format
+
+**Response**:
+```json
+{
+  "success": true,
+  "data": {
+    "project": {
+      "id": "proj_123",
+      "name": "Website Redesign",
+      "slug": "website"
+    },
+    "versions": [
+      {
+        "id": "ver_123",
+        "version": "1.0.0",
+        "name": "Major release",
+        "status": "in_progress",
+        "task_count": 15,
+        "completed_tasks": 3,
+        "progress_percentage": 20
+      },
+      {
+        "id": "ver_456",
+        "version": "0.2.0",
+        "name": "New features",
+        "status": "released",
+        "task_count": 8,
+        "completed_tasks": 8,
+        "progress_percentage": 100
+      }
+    ],
+    "total": 2
+  }
+}
+```
+
+---
+
+### `agentflow version view`
+
+View version details.
+
+```bash
+agentflow version view \
+  --org <slug> \
+  --project <slug> \
+  --version <version>
+```
+
+**Flags**:
+- `--org`: Organization slug
+- `--project`: Project slug
+- `--version` (required): Version number
+
+**Response**:
+```json
+{
+  "success": true,
+  "data": {
+    "version": {
+      "id": "ver_123",
+      "version": "1.0.0",
+      "name": "Major release",
+      "description": "First stable release",
+      "status": "in_progress",
+      "created_at": "2025-02-03T10:00:00Z"
+    },
+    "tasks": [
+      {
+        "id": "task_123",
+        "title": "Critical bug fix",
+        "status": "completed",
+        "priority": "P0"
+      },
+      {
+        "id": "task_456",
+        "title": "API integration",
+        "status": "in_progress",
+        "priority": "P0"
+      }
+    ],
+    "stats": {
+      "total_tasks": 15,
+      "completed_tasks": 3,
+      "in_progress_tasks": 1,
+      "backlog_tasks": 11,
+      "progress_percentage": 20
+    }
+  }
+}
+```
+
+---
+
+### `agentflow version release`
+
+Mark a version as released.
+
+```bash
+agentflow version release \
+  --org <slug> \
+  --project <slug> \
+  --version <version> \
+  [--release-notes <notes>]
+```
+
+**Flags**:
+- `--org`: Organization slug
+- `--project`: Project slug
+- `--version` (required): Version number
+- `--release-notes`: Release notes
+
+**Response**:
+```json
+{
+  "success": true,
+  "data": {
+    "version": {
+      "id": "ver_123",
+      "version": "1.0.0",
+      "status": "released",
+      "released_at": "2025-02-03T11:00:00Z",
+      "release_notes": "Major milestone release"
+    }
+  },
+  "message": "Version 1.0.0 released successfully"
+}
+```
+
+**Error Codes**:
+- `INCOMPLETE_TASKS`: Version has incomplete tasks (use --force to override)
+
+---
+
+### `agentflow version delete`
+
+Delete a version.
+
+```bash
+agentflow version delete \
+  --org <slug> \
+  --project <slug> \
+  --version <version> \
+  --confirm
+```
+
+**Flags**:
+- `--org`: Organization slug
+- `--project`: Project slug
+- `--version` (required): Version number
+- `--confirm`: Required to prevent accidental deletion
+
+**Response**:
+```json
+{
+  "success": true,
+  "data": {
+    "deleted_version": {
+      "id": "ver_123",
+      "version": "0.0.1"
+    }
+  }
+}
+```
+
+---
+
+## Task Commands
+
+### `agentflow task create`
+
+Create a new task.
+
+```bash
+agentflow task create \
+  --org <slug> \
+  --project <slug> \
+  --version <version> \
+  --title <title> \
+  [--description <description>] \
+  [--type <type>] \
+  [--priority <priority>] \
+  [--tags <tags>] \
+  [--agent <agent-id>]
+```
+
+**Flags**:
+- `--org`: Organization slug
+- `--project`: Project slug
+- `--version`: Version number
+- `--title` (required): Task title
+- `--description`: Task description (can be multiline)
+- `--type`: Task type (development|bug|review|testing, default: development)
+- `--priority`: Priority (P0|P1|P2|P3, default: P2)
+- `--tags`: Comma-separated tags
+- `--agent`: Agent ID to assign
+
+**With active context**:
+```bash
+agentflow task create \
+  --title "Fix navigation bug" \
+  --priority "P0" \
+  --tags "frontend,urgent"
+```
+
+**Multiline description**:
+```bash
+agentflow task create \
+  --title "API Integration" \
+  --description "Connect to external API
+- Implement OAuth
+- Handle rate limiting
+- Add retry logic" \
+  --priority "P0"
+```
+
+**Response**:
+```json
+{
+  "success": true,
+  "data": {
+    "task": {
+      "id": "task_abc123",
+      "project_id": "proj_123",
+      "version_id": "ver_123",
+      "title": "Implement contact page",
+      "description": "Create contact form with validation",
+      "type": "development",
+      "priority": "P1",
+      "status": "backlog",
+      "tags": ["frontend", "form"],
+      "assigned_agent_id": null,
+      "created_at": "2025-02-03T10:00:00Z"
+    }
+  }
+}
+```
+
+**Error Codes**:
+- `PROJECT_NOT_SET`: No active project
+- `VERSION_NOT_FOUND`: Version does not exist
+- `INVALID_PRIORITY`: Invalid priority (must be P0-P3)
+
+---
+
+### `agentflow task list`
+
+List tasks with filtering.
+
+```bash
+agentflow task list \
+  [--org <slug>] \
+  [--project <slug>] \
+  [--version <version>] \
+  [--status <status>] \
+  [--priority <priority>] \
+  [--agent <agent-id>] \
+  [--format <format>]
+```
+
+**Flags**:
+- `--org`: Organization slug
+- `--project`: Project slug
+- `--version`: Filter by version
+- `--status`: Filter by status (backlog|in_progress|completed|blocked)
+- `--priority`: Filter by priority (P0|P1|P2|P3)
+- `--agent`: Filter by assigned agent
+- `--format`: Output format
+
+**Examples**:
+```bash
+# All tasks in project
+agentflow task list
+
+# Tasks in specific version
+agentflow task list --version "1.0.0"
+
+# Backlog tasks
+agentflow task list --status "backlog"
+
+# P0 tasks only
+agentflow task list --priority "P0"
+
+# Tasks assigned to agent
+agentflow task list --agent "agent_123"
+```
+
+**Response**:
+```json
+{
+  "success": true,
+  "data": {
+    "project": {
+      "id": "proj_123",
+      "name": "Website Redesign",
+      "slug": "website"
+    },
+    "filter": {
+      "version": "1.0.0",
+      "status": null,
+      "priority": null
+    },
+    "tasks": [
+      {
+        "id": "task_abc123",
+        "title": "API integration",
+        "status": "in_progress",
+        "priority": "P0",
+        "assigned_agent_id": "agent_123",
+        "version": "1.0.0"
+      },
+      {
+        "id": "task_def456",
+        "title": "Contact page",
+        "status": "backlog",
+        "priority": "P1",
+        "assigned_agent_id": null,
+        "version": "1.0.0"
+      }
+    ],
+    "total": 15,
+    "summary": {
+      "completed": 3,
+      "in_progress": 1,
+      "backlog": 11
+    }
+  }
+}
+```
+
+---
+
+### `agentflow task view`
+
+View task details.
+
+```bash
+agentflow task view \
+  --org <slug> \
+  --project <slug> \
+  --task-id <task-id>
+```
+
+**Flags**:
+- `--org`: Organization slug
+- `--project`: Project slug
+- `--task-id` (required): Task ID
+
+**Response**:
+```json
+{
+  "success": true,
+  "data": {
+    "task": {
+      "id": "task_abc123",
+      "title": "Implement contact page",
+      "description": "Create contact form with validation\nEmail integration\nSpam protection",
+      "type": "development",
+      "priority": "P1",
+      "status": "backlog",
+      "tags": ["frontend", "form"],
+      "project_id": "proj_123",
+      "version_id": "ver_123",
+      "version": "1.0.0",
+      "assigned_agent": null,
+      "created_at": "2025-02-03T10:00:00Z",
+      "updated_at": "2025-02-03T10:00:00Z"
+    },
+    "project": {
+      "id": "proj_123",
+      "name": "Website Redesign",
+      "slug": "website"
+    },
+    "organization": {
+      "id": "org_123",
+      "name": "Acme Corp",
+      "slug": "acme"
+    }
+  }
+}
+```
+
+---
+
+### `agentflow task start`
+
+Mark a task as in progress.
+
+```bash
+agentflow task start \
+  --org <slug> \
+  --project <slug> \
+  --task-id <task-id>
+```
+
+**Flags**:
+- `--org`: Organization slug
+- `--project`: Project slug
+- `--task-id` (required): Task ID
+
+**Response**:
+```json
+{
+  "success": true,
+  "data": {
+    "task": {
+      "id": "task_abc123",
+      "title": "Implement contact page",
+      "status": "in_progress",
+      "started_at": "2025-02-03T11:00:00Z"
+    },
+    "version_progress": {
+      "version": "1.0.0",
+      "completed": 3,
+      "in_progress": 2,
+      "total": 15
+    }
+  },
+  "message": "Task started: Implement contact page"
+}
+```
+
+**Error Codes**:
+- `INVALID_STATUS`: Task not in backlog
+- `ALREADY_STARTED`: Task already in progress
+
+---
+
+### `agentflow task complete`
+
+Mark a task as completed.
+
+```bash
+agentflow task complete \
+  --org <slug> \
+  --project <slug> \
+  --task-id <task-id> \
+  [--success <notes>]
+```
+
+**Flags**:
+- `--org`: Organization slug
+- `--project`: Project slug
+- `--task-id` (required): Task ID
+- `--success`: Success criteria notes
+
+**Response**:
+```json
+{
+  "success": true,
+  "data": {
+    "task": {
+      "id": "task_abc123",
+      "title": "Implement contact page",
+      "status": "completed",
+      "completed_at": "2025-02-03T12:00:00Z",
+      "success_notes": "All acceptance criteria met"
+    },
+    "version_progress": {
+      "version": "1.0.0",
+      "completed": 4,
+      "in_progress": 1,
+      "total": 15,
+      "percentage": 27
+    }
+  },
+  "message": "Task completed: Implement contact page"
+}
+```
+
+**Error Codes**:
+- `INVALID_STATUS`: Task not in progress
+
+---
+
+### `agentflow task block`
+
+Mark a task as blocked.
+
+```bash
+agentflow task block \
+  --org <slug> \
+  --project <slug> \
+  --task-id <task-id> \
+  --reason <reason>
+```
+
+**Flags**:
+- `--org`: Organization slug
+- `--project`: Project slug
+- `--task-id` (required): Task ID
+- `--reason` (required): Block reason
+
+**Response**:
+```json
+{
+  "success": true,
+  "data": {
+    "task": {
+      "id": "task_abc123",
+      "title": "Implement contact page",
+      "status": "blocked",
+      "blocked_at": "2025-02-03T12:00:00Z",
+      "block_reason": "Waiting for API access credentials"
+    }
+  },
+  "message": "Task blocked: Implement contact page"
+}
+```
+
+---
+
+### `agentflow task unblock`
+
+Remove blocked status from a task.
+
+```bash
+agentflow task unblock \
+  --org <slug> \
+  --project <slug> \
+  --task-id <task-id>
+```
+
+**Flags**:
+- `--org`: Organization slug
+- `--project`: Project slug
+- `--task-id` (required): Task ID
+
+**Response**:
+```json
+{
+  "success": true,
+  "data": {
+    "task": {
+      "id": "task_abc123",
+      "title": "Implement contact page",
+      "status": "in_progress",
+      "unblocked_at": "2025-02-03T13:00:00Z"
+    }
+  },
+  "message": "Task unblocked: Implement contact page"
+}
+```
+
+---
+
+### `agentflow task assign`
+
+Assign a task to an agent.
+
+```bash
+agentflow task assign \
+  --org <slug> \
+  --project <slug> \
+  --task-id <task-id> \
+  --agent <agent-id>
+```
+
+**Flags**:
+- `--org`: Organization slug
+- `--project`: Project slug
+- `--task-id` (required): Task ID
+- `--agent` (required): Agent ID
+
+**Response**:
+```json
+{
+  "success": true,
+  "data": {
+    "task": {
+      "id": "task_abc123",
+      "title": "Implement contact page",
+      "assigned_agent_id": "agent_123",
+      "assigned_agent": {
+        "id": "agent_123",
+        "name": "Frontend Developer",
+        "agent_code": "agent-frontend"
+      },
+      "assigned_at": "2025-02-03T12:00:00Z"
+    }
+  },
+  "message": "Task assigned to agent_123 (Frontend Developer)"
+}
+```
+
+---
+
+### `agentflow task update`
+
+Update task properties.
+
+```bash
+agentflow task update \
+  --org <slug> \
+  --project <slug> \
+  --task-id <task-id> \
+  [--title <title>] \
+  [--description <description>] \
+  [--priority <priority>] \
+  [--tags <tags>]
+```
+
+**Flags**:
+- `--org`: Organization slug
+- `--project`: Project slug
+- `--task-id` (required): Task ID
+- `--title`: New title
+- `--description`: New description
+- `--priority`: New priority (P0|P1|P2|P3)
+- `--tags`: New comma-separated tags
+
+**Response**:
+```json
+{
+  "success": true,
+  "data": {
+    "task": {
+      "id": "task_abc123",
+      "title": "Implement contact page (updated)",
+      "priority": "P0",
+      "tags": ["frontend", "form", "urgent"],
+      "updated_at": "2025-02-03T13:00:00Z"
+    }
+  },
+  "message": "Task updated"
+}
+```
+
+---
+
+### `agentflow task delete`
+
+Delete a task.
+
+```bash
+agentflow task delete \
+  --org <slug> \
+  --project <slug> \
+  --task-id <task-id> \
+  --confirm
+```
+
+**Flags**:
+- `--org`: Organization slug
+- `--project`: Project slug
+- `--task-id` (required): Task ID
+- `--confirm`: Required to prevent accidental deletion
+
+**Response**:
+```json
+{
+  "success": true,
+  "data": {
+    "deleted_task": {
+      "id": "task_abc123",
+      "title": "Implement contact page"
+    }
+  },
+  "message": "Task deleted"
+}
+```
+
+---
+
+## Context Management
+
+### Context File Location
+
+`~/.agentflow/context.json`
+
+### Context File Schema
+
+```json
+{
+  "api_key": "ak_live_...",
+  "active_org": "acme",
+  "active_project": "website",
+  "active_version": null,
+  "active_agent": "agent_xyz789",
+  "active_agent_name": "Alice",
+  "active_agent_role": "frontend-dev",
+  "user": {
+    "id": "user_123",
+    "email": "david@example.com",
+    "name": "David"
+  }
+}
+```
+
+### Prompt Display
+
+The CLI prompt reflects the current context:
+
+```bash
+# User mode (default)
+[acme/website] $
+
+# Agent mode
+[acme/website]@Alice $
+
+# With version
+[acme/website@1.0.0] $
+
+# With version and agent
+[acme/website@1.0.0]@Alice $
+```
+
+### Context Resolution Order
+
+1. **Flags override everything**
+2. **Active context from file**
+3. **Error if required context missing**
+
+Example:
+```bash
+# Uses acme from context, overrides project
+agentflow task list --project "api"
+
+# Uses both from context
+agentflow task list
+
+# Error: no org in context
+# (after clearing context or first login)
+agentflow task list
+# → Error: No active organization. Use --org flag or run 'agentflow org use'
+```
+
+---
+
+## Complete Workflow Example
+
+```bash
+# ═══════════════════════════════════════════════════════════════
+# PART 1: CEO SETUP (Human CLI - agentflow)
+# ═══════════════════════════════════════════════════════════════
+
+# 1. First-time setup
+agentflow auth register \
+  --email "david@example.com" \
+  --password "securepass" \
+  --name "David"
+
+# 2. Create roles with authority levels (global templates, done once)
+agentflow role create \
+  --name "Junior Developer" \
+  --slug "junior-dev" \
+  --level 1
+
+agentflow role create \
+  --name "Frontend Developer" \
+  --slug "frontend-dev" \
+  --level 3 \
+  --description "Expert React, TypeScript and UX"
+
+agentflow role add-document \
+  --role "frontend-dev" \
+  --title "React Best Practices" \
+  --content "# React Best Practices
+
+- Use functional components with hooks
+- Implement proper error boundaries
+- Follow React performance optimization patterns
+- Always handle loading and error states
+- Use TypeScript for type safety"
+
+agentflow role create \
+  --name "Tech Lead" \
+  --slug "tech-lead" \
+  --level 5
+
+# 3. Create organization
+agentflow org create \
+  --name "My Startup" \
+  --slug "mystartup" \
+  --description "Tech company"
+
+# 4. Set active org
+agentflow org use --slug "mystartup"
+
+# 5. Create agents (instances of roles)
+agentflow agent create \
+  --role "frontend-dev" \
+  --name "Alice"
+
+agentflow agent create \
+  --role "junior-dev" \
+  --name "Bob"
+
+# 6. Create project
+agentflow project create \
+  --name "My App" \
+  --slug "myapp" \
+  --github-url "https://github.com/mystartup/myapp"
+
+# 7. Set active project
+agentflow project use --slug "myapp"
+
+# 8. Create version
+agentflow version create \
+  --version "0.1.0" \
+  --name "Initial release" \
+  --description "First MVP"
+
+# 9. Create tasks with required levels
+agentflow task create \
+  --version "0.1.0" \
+  --title "Fix typo" \
+  --priority "P3" \
+  --required-level 1
+
+agentflow task create \
+  --version "0.1.0" \
+  --title "Setup project structure" \
+  --priority "P0" \
+  --required-level 3
+
+agentflow task create \
+  --version "0.1.0" \
+  --title "Database migration" \
+  --priority "P0" \
+  --required-level 5
+
+# 10. List tasks (CEO view - all tasks)
+[mystartup/myapp] $ agentflow task list --version "0.1.0"
+→ 3 tasks
+
+# 11. Assign tasks to agents
+agentflow task assign \
+  --task-id "task_typo" \
+  --agent "agent_bob"  # Bob (level 1)
+
+agentflow task assign \
+  --task-id "task_structure" \
+  --agent "agent_alice"  # Alice (level 3)
+
+# 12. Launch Alice's agent token
+[mystartup/myapp] $ agentflow agent launch --agent "agent_alice"
+→ Agent token generated: ~/.agentflow/agents/agent_alice/token.json
+→ Agent can now run: agentflow-agent --config ~/.agentflow/agents/agent_alice/token.json
+
+# ═══════════════════════════════════════════════════════════════
+# PART 2: ALICE WORKS (Agent CLI - agentflow-agent)
+# ═══════════════════════════════════════════════════════════════
+
+# 13. Alice (AI agent) starts with her token
+$ agentflow-agent --config ~/.agentflow/agents/agent_alice/token.json
+
+# 14. Alice checks her status
+$ agentflow-agent status
+→ Current mode: Agent Alice (Frontend Developer, Level 3)
+→ Permissions: task:list:own, task:start:own, task:complete:own, role:view:own
+
+# 15. Alice lists her assigned tasks
+$ agentflow-agent task list
+→ 1 task: "Setup project structure" (Level 3)
+
+# 16. Alice views her role and documents
+$ agentflow-agent role view --slug "frontend-dev"
+→ Shows React Best Practices document
+
+# 17. Alice starts a task
+$ agentflow-agent task start --task-id "task_structure"
+→ Task started and assigned to you (Alice)
+
+# 18. Alice completes a task
+$ agentflow-agent task complete \
+  --task-id "task_structure" \
+  --success "Project structure created with monorepo setup"
+
+# 19. Alice tries to work on a task above her level
+$ agentflow-agent task start --task-id "task_migration"
+→ Error: Task requires authority level 5. Your level: 3.
+
+# 20. Alice tries to use CEO commands
+$ agentflow-agent agent create --role "tech-lead" --name "Eve"
+→ Error: Command not available in agent CLI
+
+$ agentflow-agent task list --all
+→ Error: --all flag not available in agent CLI
+
+# Alice's session ends (she just exits)
+$ exit
+
+# ═══════════════════════════════════════════════════════════════
+# PART 3: CEO MONITORS (Human CLI - agentflow)
+# ═══════════════════════════════════════════════════════════════
+
+# 21. CEO checks progress
+[mystartup/myapp] $ agentflow version view --version "0.1.0"
+→ Shows task completion status
+
+# 22. CEO releases version
+[mystartup/myapp] $ agentflow version release \
+  --version "0.1.0" \
+  --release-notes "Initial MVP release"
+```
+
+**Security Highlights**:
+- Alice (Level 3) cannot work on Level 5 tasks
+- Alice cannot create other agents
+- Alice cannot view all tasks, only her own
+- Alice cannot "exit" to CEO mode - completely separate CLI
+- CEO (Level 10) has full control over everything
+
+---
+
+## Error Codes Reference
+
+| Code | Description |
+|------|-------------|
+| `UNAUTHENTICATED` | No valid API key |
+| `INVALID_CREDENTIALS` | Email or password incorrect |
+| `EMAIL_EXISTS` | Email already registered |
+| `WEAK_PASSWORD` | Password does not meet requirements |
+| `NOT_FOUND` | Resource not found |
+| `SLUG_EXISTS` | Slug already exists |
+| `INVALID_SLUG` | Slug format invalid |
+| `INVALID_LEVEL` | Level must be between 1 and 10 |
+| `ACCESS_DENIED` | User lacks permission |
+| `NOT_EMPTY` | Cannot delete resource with dependencies |
+| `ORG_NOT_SET` | No active organization |
+| `PROJECT_NOT_SET` | No active project |
+| `VERSION_NOT_FOUND` | Version does not exist |
+| `INVALID_VERSION` | Version format invalid (not semver) |
+| `INVALID_STATUS` | Invalid status transition |
+| `ALREADY_STARTED` | Task already in progress |
+| `INCOMPLETE_TASKS` | Cannot release version with incomplete tasks |
+| `INVALID_PRIORITY` | Priority must be P0-P3 |
+
+### Security & Authorization Error Codes
+
+| Code | Description |
+|------|-------------|
+| `INSUFFICIENT_LEVEL` | Agent level too low for this action |
+| `TASK_LEVEL_TOO_HIGH` | Task requires higher authority level |
+| `CANNOT_CREATE_HIGHER_LEVEL` | Cannot create agent with higher level |
+| `CANNOT_IMPERSONATE_CREATOR` | Cannot impersonate agent's creator |
+| `CANNOT_MODIFY_OWN_AGENT` | Cannot modify own agent attributes |
+| `CANNOT_MODIFY_CREATOR` | Cannot modify the agent that created you |
+| `ASSIGNED_TO_OTHER` | Task is assigned to another agent |
+| `CANNOT_VIEW_ALL_TASKS` | `--all` requires CEO/user mode |
+| `COMMAND_NOT_AVAILABLE` | Command not available in agent CLI |
+| `ROLE_LEVEL_MISMATCH` | Role level exceeds agent's maximum |
+
+---
+
+## Implementation Notes
+
+### v0.1.0 Scope
+
+This CLI specification covers v0.1.0 functionality:
+- Authentication
+- Roles (global templates)
+- Organizations
+- Projects
+- Agents (role instances)
+- Versions
+- Tasks
+
+### Future Versions
+
+Future versions will add:
+- Session management (`agentflow session ...`)
+- Communication (`agentflow log ...`)
+- Advanced agent operations (`agentflow agent pull ...`)
+
+### Python Implementation
+
+Recommended stack:
+- **Typer**: CLI framework
+- **httpx**: HTTP client
+- **Pydantic**: Data validation
+- **Rich**: Terminal output formatting (optional, for --format table)
+
+### API Communication
+
+All CLI commands communicate with the AgentFlow API via HTTP REST:
+- Base URL: Configurable via `--api-url` flag or env var
+- Authentication: Bearer token (API key)
+- Content-Type: application/json
+
+### Exit Codes
+
+| Code | Meaning |
+|------|---------|
+| 0 | Success |
+| 1 | Generic error |
+| 2 | Authentication error |
+| 3 | Not found |
+| 4 | Validation error |
+| 5 | API error |
+
+---
+
+## Appendix: Quick Reference
+
+### Human CLI (`agentflow`)
+
+```bash
+# Auth
+agentflow auth register --email <email> --password <pass> --name <name>
+agentflow auth login --email <email> --password <pass>
+agentflow auth status
+agentflow auth logout
+
+# Role (global, with levels)
+agentflow role create --name <name> --slug <slug> --level <level>
+agentflow role list [--format table]
+agentflow role view --slug <slug>
+agentflow role update --slug <slug> [--name <name>]
+agentflow role add-document --role <slug> --title <title> --content <content>
+agentflow role add-document --role <slug> --title <title> --file <path>
+agentflow role list-documents --slug <slug>
+agentflow role remove-document --role <slug> --document <id> --confirm
+agentflow role delete --slug <slug> --confirm
+
+# Org
+agentflow org create --name <name> --slug <slug>
+agentflow org list [--format table]
+agentflow org view --slug <slug>
+agentflow org use --slug <slug>
+agentflow org delete --slug <slug> --confirm
+
+# Project
+agentflow project create --name <name> --slug <slug> [--github-url <url>]
+agentflow project list [--format table]
+agentflow project view --slug <slug>
+agentflow project use --slug <slug>
+agentflow project delete --slug <slug> --confirm
+
+# Agent (requires org)
+agentflow agent create --role <slug> --name <name> [--project <slug>]
+agentflow agent list [--format table]
+agentflow agent view --agent <id>
+agentflow agent update --agent <id> [--name <name>]
+agentflow agent delete --agent <id> --confirm
+agentflow agent launch --agent <id> [--output <path>]
+
+# Context shortcut
+agentflow use --org <slug> --project <slug>
+
+# Version
+agentflow version create --version <version> [--name <name>]
+agentflow version list [--format table]
+agentflow version view --version <version>
+agentflow version release --version <version> [--release-notes <notes>]
+agentflow version delete --version <version> --confirm
+
+# Task
+agentflow task create --title <title> [--priority <priority>] [--required-level <level>]
+agentflow task list [--version <version>] [--status <status>]
+agentflow task view --task-id <id>
+agentflow task start --task-id <id>
+agentflow task complete --task-id <id> [--success <notes>]
+agentflow task block --task-id <id> --reason <reason>
+agentflow task unblock --task-id <id>
+agentflow task assign --task-id <id> --agent <agent-id>
+agentflow task update --task-id <id> [--priority <priority>]
+agentflow task delete --task-id <id> --confirm
+```
+
+### Agent CLI (`agentflow-agent`)
+
+```bash
+# Usage
+agentflow-agent --config <token-file> <command> [flags]
+
+# Status
+agentflow-agent status
+
+# Task (own tasks only)
+agentflow-agent task list
+agentflow-agent task view --task-id <id>
+agentflow-agent task start --task-id <id>
+agentflow-agent task complete --task-id <id> [--success <notes>]
+agentflow-agent task block --task-id <id> --reason <reason>
+agentflow-agent task unblock --task-id <id>
+
+# Role (own role only)
+agentflow-agent role view --slug <slug>
+
+# Stats (own stats only)
+agentflow-agent agent stats
+```
+
+---
+
+**Status**: Ready for implementation
+**Next steps**: Create API specification matching CLI commands
